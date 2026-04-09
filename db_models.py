@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -15,6 +15,10 @@ class Scan(Base):
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
     form_data = Column(JSON, nullable=True)
+    in_domain = Column(Boolean, default=False, nullable=False)
+    max_pages = Column(Integer, default=15, nullable=False)
+    max_depth = Column(Integer, default=3, nullable=False)
+    max_actions = Column(Integer, default=50, nullable=False)
 
     actions = relationship("ActionRecord", back_populates="scan", cascade="all, delete-orphan")
 

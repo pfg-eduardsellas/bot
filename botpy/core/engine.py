@@ -1,7 +1,9 @@
 import asyncio
 import json
+import os
 from collections import deque
 from typing import List, Set, Dict, Any
+from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
 from botpy.models.action import Action, ActionType, ActionRetryError
@@ -17,11 +19,14 @@ class Engine:
         max_depth: int = 3,
         max_actions: int = 50,
         form_data: dict = None,
+        in_domain: bool = False,
     ):
         self.start_url = start_url
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.max_actions = max_actions
+        self.in_domain = in_domain
+        self.start_domain = urlparse(start_url).netloc
         self.queue: deque[Action] = deque()
         self.actions_graph: Dict[int, Action] = {}
         self.detector = Detector(form_data=form_data or {})
@@ -30,6 +35,9 @@ class Engine:
 
         self.known_selectors: Set[str] = set()
         self.captured_errors: List[str] = []
+
+    def _is_same_domain(self, url: str) -> bool:
+        return urlparse(url).netloc == self.start_domain
 
     def _on_console_message(self, msg):
         if msg.type == "error":
@@ -83,7 +91,8 @@ class Engine:
 
     async def run(self):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+            browser = await p.chromium.launch(headless=headless)
             page = await browser.new_page()
             page.on("console", self._on_console_message)
 
@@ -180,24 +189,28 @@ class Engine:
                                 or start_action.depth >= self.max_depth
                             ):
                                 self.current_id_counter += 1
-                                # Calculate depth of the action that caused navigation
                                 new_depth = start_action.depth + 1
                                 url_action = URLAction(
                                     id=self.current_id_counter,
                                     url=post_url,
                                     depth=new_depth,
                                 )
-                                start_action = url_action
                                 self.processed_urls.add(post_url)
 
                                 # Link current_action -> url_action
                                 current_action.add_successor(url_action.id)
                                 url_action.add_predecessor(current_action.id)
 
-                                self.add_action(
-                                    url_action, to_front=True
-                                )  # URLAction goes next
-                                parent_for_new_actions = url_action
+                                if self.in_domain and not self._is_same_domain(
+                                    post_url
+                                ):
+                                    print(f"Skipping out-of-domain URL: {post_url}")
+                                    self.actions_graph[url_action.id] = url_action
+                                    self.known_selectors.add(url_action.selector)
+                                else:
+                                    start_action = url_action
+                                    self.add_action(url_action, to_front=True)
+                                    parent_for_new_actions = url_action
 
                     # DIFF: detect AFTER
                     post_actions = await self.detector.detect(
