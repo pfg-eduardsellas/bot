@@ -5,6 +5,10 @@ from abc import ABC, abstractmethod
 # Avoid circular imports if we need type hinting for 'Page' later
 # from playwright.async_api import Page
 
+class ActionRetryError(Exception):
+    """Exception raised when an action fails but should be retried."""
+    pass
+
 class ActionType(Enum):
     URL = "URL"
     BUTTON = "BUTTON"
@@ -28,6 +32,7 @@ class Action(ABC):
         self.predecessors: List[int] = []
         self.successors: List[int] = []
         self.errors: List[str] = []
+        self.retry_count: int = 0
 
     def add_predecessor(self, action_id: int):
         if action_id not in self.predecessors:

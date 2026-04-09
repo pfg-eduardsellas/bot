@@ -24,7 +24,12 @@ async def run_bot_worker(scan_id: int, target_url: str, max_urls: int = 3, max_d
             db.commit()
 
         # Execute Engine
-        engine = Engine(start_url=target_url, max_pages=max_urls, max_depth=max_depth, max_actions=max_actions)
+        raw_form_data = scan.form_data if scan and scan.form_data else {}
+        if isinstance(raw_form_data, str):
+            import json as _json
+            raw_form_data = _json.loads(raw_form_data)
+        form_data = raw_form_data
+        engine = Engine(start_url=target_url, max_pages=max_urls, max_depth=max_depth, max_actions=max_actions, form_data=form_data)
         await engine.run()
         
         # Collect actions

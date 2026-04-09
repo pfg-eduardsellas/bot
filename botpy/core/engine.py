@@ -4,20 +4,27 @@ from collections import deque
 from typing import List, Set, Dict, Any
 from playwright.async_api import async_playwright
 
-from botpy.models.action import Action, ActionType
+from botpy.models.action import Action, ActionType, ActionRetryError
 from botpy.scrapers.detector import Detector
 from botpy.actions.url_action import URLAction
 
 
 class Engine:
-    def __init__(self, start_url: str, max_pages: int = 10, max_depth: int = 3, max_actions: int = 100):
+    def __init__(
+        self,
+        start_url: str,
+        max_pages: int = 15,
+        max_depth: int = 3,
+        max_actions: int = 50,
+        form_data: dict = None,
+    ):
         self.start_url = start_url
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.max_actions = max_actions
         self.queue: deque[Action] = deque()
         self.actions_graph: Dict[int, Action] = {}
-        self.detector = Detector()
+        self.detector = Detector(form_data=form_data or {})
         self.current_id_counter = 0
         self.processed_urls: Set[str] = set()
 
@@ -31,7 +38,7 @@ class Engine:
     def add_action(self, action: Action, to_front: bool = False):
         self.actions_graph[action.id] = action
         self.known_selectors.add(action.selector)
-        to_front=True
+        to_front = True
         if to_front:
             self.queue.appendleft(action)
         else:
@@ -51,10 +58,10 @@ class Engine:
     def get_path_to_action(self, target_id: int) -> List[Action]:
         """Return path of actions to reach the target action."""
         # Simple BFS since it's a DAG (mostly)
-        # Find the first URLAction (root) to start from? 
+        # Find the first URLAction (root) to start from?
         # Actually, we can just look for the path in the actions_graph
         # starting from the target and going backwards via predecessors.
-        
+
         path = []
         curr_id = target_id
         while curr_id in self.actions_graph:
@@ -64,8 +71,8 @@ class Engine:
             if not action.predecessors or action.type == ActionType.URL:
                 break
             # Pick the first predecessor for simplicity (assuming a tree-like flow)
-            curr_id = action.predecessors[0] # is [0] the sortest?
-        
+            curr_id = action.predecessors[0]  # is [0] the sortest?
+
         # remove target action, we want to execute the path to the target action on engine
         return list(reversed(path))
 
@@ -82,31 +89,42 @@ class Engine:
 
             # Initialize with the root URL action
             self.current_id_counter += 1
-            start_action = URLAction(id=self.current_id_counter, url=self.start_url, depth=0)
+            start_action = URLAction(
+                id=self.current_id_counter, url=self.start_url, depth=0
+            )
             self.add_action(start_action)
-
 
             while self.queue:
                 if len(self.actions_graph) >= self.max_actions:
                     break
-                    
+
                 current_action = self.queue.popleft()
-                print(f"Processing Action ID {current_action.id} ({current_action.type.name}): {current_action.selector or current_action.value}")
+                print(
+                    f"Processing Action ID {current_action.id} ({current_action.type.name}): {current_action.selector or current_action.value}"
+                )
 
                 try:
                     if current_action.type != ActionType.URL:
-                        is_visible = await page.locator(current_action.selector).first.is_visible()
+                        is_visible = await page.locator(
+                            current_action.selector
+                        ).first.is_visible()
                         if not is_visible:
                             # Backtracking
-                            print(f"Element not found for Action {current_action.id}. Start Backtracking...")
+                            print(
+                                f"Element not found for Action {current_action.id}. Start Backtracking..."
+                            )
                             path = self.get_path_to_action(current_action.id)
-                            
-                            start_action = path[0] # update start action for depth
+
+                            start_action = path[0]  # update start action for depth
                             await self.execute_path(page, path)
-                            
+
                             # Re-verify visibility
-                            if not await page.locator(current_action.selector).first.is_visible():
-                                print(f"Backtracking failed to recover element for Action {current_action.id}.")
+                            if not await page.locator(
+                                current_action.selector
+                            ).first.is_visible():
+                                print(
+                                    f"Backtracking failed to recover element for Action {current_action.id}."
+                                )
                                 continue
 
                     # To check if the URL changed
@@ -128,10 +146,10 @@ class Engine:
                     # Wait for the page to settle
                     await page.wait_for_load_state("networkidle")
                     await asyncio.sleep(2)
-                    
+
                     # Capture errors after action settle
                     current_action.errors = self.captured_errors.copy()
-                    
+
                     if current_action.type == ActionType.URL:
                         post_url = current_action.value
                     else:
@@ -140,48 +158,67 @@ class Engine:
 
                     # URL CHANGED (New page)
                     if post_url != pre_url and current_action.type != ActionType.URL:
-                        
+
                         # Check if this URL already exists in our graph
                         existing_url_id = None
                         for aid, action in self.actions_graph.items():
-                            if action.type == ActionType.URL and action.value == post_url:
+                            if (
+                                action.type == ActionType.URL
+                                and action.value == post_url
+                            ):
                                 existing_url_id = aid
                                 break
-                        
+
                         if existing_url_id:
                             current_action.add_successor(existing_url_id)
-                            self.actions_graph[existing_url_id].add_predecessor(current_action.id)
+                            self.actions_graph[existing_url_id].add_predecessor(
+                                current_action.id
+                            )
                         else:
-                            if len(self.processed_urls) < self.max_pages or start_action.depth>= self.max_depth:
+                            if (
+                                len(self.processed_urls) < self.max_pages
+                                or start_action.depth >= self.max_depth
+                            ):
                                 self.current_id_counter += 1
                                 # Calculate depth of the action that caused navigation
                                 new_depth = start_action.depth + 1
-                                url_action = URLAction(id=self.current_id_counter, url=post_url, depth=new_depth)
+                                url_action = URLAction(
+                                    id=self.current_id_counter,
+                                    url=post_url,
+                                    depth=new_depth,
+                                )
                                 start_action = url_action
                                 self.processed_urls.add(post_url)
-                                
+
                                 # Link current_action -> url_action
                                 current_action.add_successor(url_action.id)
                                 url_action.add_predecessor(current_action.id)
-                                
-                                self.add_action(url_action, to_front=True) # URLAction goes next
+
+                                self.add_action(
+                                    url_action, to_front=True
+                                )  # URLAction goes next
                                 parent_for_new_actions = url_action
 
                     # DIFF: detect AFTER
-                    post_actions = await self.detector.detect(page, self.current_id_counter)
+                    post_actions = await self.detector.detect(
+                        page, self.current_id_counter
+                    )
 
                     new_actions = [
-                        a for a in post_actions
+                        a
+                        for a in post_actions
                         if a.selector not in pre_selectors
                         and a.selector not in self.known_selectors
                     ]
-
 
                     for action in reversed(new_actions):
                         parent_for_new_actions.add_successor(action.id)
                         action.add_predecessor(parent_for_new_actions.id)
                         self.add_action(action, to_front=True)
 
+                except ActionRetryError as e:
+                    print(f"Action {current_action.id} queued for retry: {e}")
+                    self.queue.append(current_action)
                 except Exception as e:
                     print(f"Error on action {current_action.id}: {e}")
 
@@ -189,11 +226,10 @@ class Engine:
             self.unify_urls()
             self.save_graph()
 
-
     def unify_urls(self):
         """Unifies multiple URLActions with the same URL (value) into a single node."""
         from botpy.models.action import ActionType
-        
+
         # 1. Group URL actions by their value
         url_groups: Dict[str, List[int]] = {}
         for action_id, action in self.actions_graph.items():
@@ -204,33 +240,39 @@ class Engine:
         for url_value, ids in url_groups.items():
             if len(ids) <= 1:
                 continue
-            
+
             canonical_id = ids[0]
             canonical_action = self.actions_graph[canonical_id]
             others = ids[1:]
-                        
+
             for other_id in others:
                 other_action = self.actions_graph[other_id]
-                
+
                 for pred_id in other_action.predecessors:
                     if pred_id != canonical_id:
                         canonical_action.add_predecessor(pred_id)
                 for succ_id in other_action.successors:
                     if succ_id != canonical_id:
                         canonical_action.add_successor(succ_id)
-                
+
                 # Update references in all other actions
                 for action in self.actions_graph.values():
                     # Update predecessors lists
                     if other_id in action.predecessors:
-                        action.predecessors = [canonical_id if x == other_id else x for x in action.predecessors]
+                        action.predecessors = [
+                            canonical_id if x == other_id else x
+                            for x in action.predecessors
+                        ]
                         action.predecessors = list(dict.fromkeys(action.predecessors))
-                        
+
                     # Update successors lists
                     if other_id in action.successors:
-                        action.successors = [canonical_id if x == other_id else x for x in action.successors]
+                        action.successors = [
+                            canonical_id if x == other_id else x
+                            for x in action.successors
+                        ]
                         action.successors = list(dict.fromkeys(action.successors))
-                
+
                 # Remove the redundant action from the graph AFTER updating references
                 if other_id in self.actions_graph:
                     del self.actions_graph[other_id]
@@ -244,11 +286,14 @@ class Engine:
 
     def save_graph(self):
         import os
+
         output = {
             "actions": [action.to_dict() for action in self.actions_graph.values()]
         }
         # Write next to the backend root (two levels up from core/engine.py)
-        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        backend_dir = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
         out_path = os.path.join(backend_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=4)

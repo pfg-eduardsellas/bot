@@ -1,39 +1,115 @@
 from typing import Any
 from botpy.models.action import Action, ActionType
 
+DEFAULT_VALUES = {
+    "text": "This is a text input",
+    "textarea": "This is a textarea input",
+    "number": "123",
+    "email": "test@example.com",
+    "password": "Password123!",
+    "date": "2024-01-01",
+    "tel": "123456789",
+    "url": "https://example.com",
+    "search": "search test",
+    "color": "#ff0000",
+}
+
+
 class FormAction(Action):
-    def __init__(self, id: int, selector: str, form_data: dict = None, custom_id: str = ""):
+    def __init__(
+        self, id: int, selector: str, form_data: dict = None, custom_id: str = ""
+    ):
         super().__init__(id, ActionType.FORM, selector=selector, custom_id=custom_id)
         self.form_data = form_data or {}
-        # We can store the form data in the 'value' attribute as a string representation 
+        # We can store the form data in the 'value' attribute as a string representation
         # or just keep it separate. For consistency with to_dict we might want to serialization strategy.
         self.value = str(self.form_data)
 
     async def execute(self, page: Any):
         print(f"Executing FormAction: Filling form {self.selector}")
-        
-        # 1. Fill inputs
-        # This is a simplified logic. In a real scenario we'd iterate through inputs in the form.
-        # For this example, we assume self.form_data keys match input selectors or names.
-        
-        if self.form_data:
-            for key, value in self.form_data.items():
-                try:
-                    await page.fill(key, value)
-                except Exception as e:
-                    print(f"Error filling {key}: {e}")
 
-        # 2. Submit
-        # Check if the selector itself is a form or a submit button.
-        # Use locator to find the submit button within the form if selector is the form tag.
-        
+        form_locator = page.locator(self.selector)
+
+        # fit inputs
+        inputs = await form_locator.locator("input, textarea").all()
+
+        for input_element in inputs:
+            tag_name = await input_element.evaluate(
+                "el => el.tagName.toLowerCase()"
+            )  # get input or textarea
+
+            if tag_name == "textarea":
+                input_type = "text"
+            else:
+                input_type = await input_element.get_attribute("type") or "text"
+
+            # Check if user sets a value
+            name_attr = await input_element.get_attribute("name")
+            id_attr = await input_element.get_attribute("id")
+
+            value_to_fill = None
+            user_value = None
+
+            if self.form_data and name_attr in self.form_data:
+                user_value = str(self.form_data[name_attr])
+            elif self.form_data and id_attr in self.form_data:
+                user_value = str(self.form_data[id_attr])
+
+            # checkbox / radio logic
+            if input_type in ["checkbox", "radio"]:
+                if user_value is not None:
+                    should_check = user_value in ("True", "true", "1", "yes")
+                else:
+                    should_check = True  # default to true
+                try:
+                    if should_check:
+                        await input_element.check(force=True)
+                    else:
+                        await input_element.uncheck(force=True)
+                except Exception as e:
+                    err = f"Error checking input type {input_type}: {e}"
+                    print(err)
+                    self.errors.append(err)
+                continue
+
+            # if no user value, use default
+            elif user_value is not None:
+                value_to_fill = user_value
+            elif (
+                input_type == "submit"
+                or input_type == "button"
+                or input_type == "hidden"
+                or input_type == "image"
+                or input_type == "reset"
+            ):
+                continue  # Ignore these types as they are not meant to be filled
+            else:
+                value_to_fill = DEFAULT_VALUES.get(input_type, "Default")
+
+            if value_to_fill is not None:
+                try:
+                    await input_element.fill(value_to_fill)
+                except Exception as e:
+                    err = f"Error filling {input_type}: {e}"
+                    print(err)
+                    self.errors.append(err)
+
+        # Send form: explicit submit > single button in container > form.submit()
         try:
-             # Try to submit via press 'Enter' on one of the fields if no submit button logic is robust
-             # Or just find a submit button inside.
-             # For now, let's assume valid submit triggers by clicking the form's submit button / pressing enter.
-             # Or we can just use page.locator(self.selector).evaluate("form => form.submit()")
-             
-             await page.locator(self.selector).evaluate("form => form.submit()")
-             # Alternatively act on a specific submit button if we had its selector
+            explicit_submit = form_locator.locator(
+                "button[type='submit'], input[type='submit']"
+            )
+            all_buttons = form_locator.locator("button, input[type='button']")
+
+            if await explicit_submit.count() > 0:
+                await explicit_submit.first.click()
+            elif await all_buttons.count() == 1:
+                await all_buttons.first.click()
+            else:
+                await form_locator.evaluate(
+                    "el => { if (el.tagName === 'FORM') el.submit(); }"
+                )
         except Exception as e:
-             print(f"Error submitting form: {e}")
+            err = f"Error submitting form {self.selector}: {e}"
+            print(err)
+            self.errors.append(err)

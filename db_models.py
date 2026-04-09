@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -14,6 +14,7 @@ class Scan(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
+    form_data = Column(JSON, nullable=True)
 
     actions = relationship("ActionRecord", back_populates="scan", cascade="all, delete-orphan")
 
