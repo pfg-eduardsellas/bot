@@ -8,7 +8,7 @@ class ButtonAction(Action):
         super().__init__(id, ActionType.BUTTON, selector=selector, custom_id=custom_id)
 
     async def execute(self, page: Any):
-        print(f"Executing ButtonAction: Clicking {self.selector}")
+        self.log_fn(f"Executing ButtonAction: Clicking {self.selector}")
         try:
             # Use .first() to handle cases where the selector matches multiple elements
             locator = page.locator(self.selector).first
@@ -65,5 +65,5 @@ class ButtonAction(Action):
         except ActionRetryError as e:
             raise e
         except Exception as e:
-            print(f"Error preparing ButtonAction: {e}")
+            self.log_fn(f"Error on ButtonAction: {e}")
             raise e  # Raise to trigger backtracking in engine if needed

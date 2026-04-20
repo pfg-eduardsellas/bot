@@ -32,7 +32,9 @@ class Action(ABC):
         self.predecessors: List[int] = []
         self.successors: List[int] = []
         self.errors: List[str] = []
+        self.accessibility_violations: List[Dict[str, Any]] = []
         self.retry_count: int = 0
+        self.log_fn = print
 
     def add_predecessor(self, action_id: int):
         if action_id not in self.predecessors:
@@ -59,5 +61,6 @@ class Action(ABC):
             "value": self.value,
             "predecessors": self.predecessors,
             "successors": self.successors,
-            "errors": self.errors
+            "errors": self.errors,
+            "accessibility_violations": self.accessibility_violations,
         }

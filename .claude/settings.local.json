@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /d/pfg/bot/*.py /d/pfg/bot/botpy/**/*.py)",
+      "Bash(python3 -c ':*)",
+      "Bash(py -c ':*)",
+      "Bash(xargs grep *)",
+      "Bash(xargs head *)",
+      "Bash(xargs ls *)"
+    ]
+  }
+}

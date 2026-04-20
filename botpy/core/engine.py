@@ -9,6 +9,7 @@ from playwright.async_api import async_playwright
 from botpy.models.action import Action, ActionType, ActionRetryError
 from botpy.scrapers.detector import Detector
 from botpy.actions.url_action import URLAction
+from botpy.core.accessibility import setup_axe, run_full_scan, run_partial_scan
 
 
 class Engine:
@@ -20,12 +21,15 @@ class Engine:
         max_actions: int = 50,
         form_data: dict = None,
         in_domain: bool = False,
+        accessibility: bool = True,
+        log_fn=None,
     ):
         self.start_url = start_url
         self.max_pages = max_pages
         self.max_depth = max_depth
         self.max_actions = max_actions
         self.in_domain = in_domain
+        self.accessibility = accessibility
         self.start_domain = urlparse(start_url).netloc
         self.queue: deque[Action] = deque()
         self.actions_graph: Dict[int, Action] = {}
@@ -35,6 +39,7 @@ class Engine:
 
         self.known_selectors: Set[str] = set()
         self.captured_errors: List[str] = []
+        self.log = log_fn if log_fn is not None else print
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.start_domain
@@ -44,6 +49,7 @@ class Engine:
             self.captured_errors.append(msg.text)
 
     def add_action(self, action: Action, to_front: bool = False):
+        action.log_fn = self.log
         self.actions_graph[action.id] = action
         self.known_selectors.add(action.selector)
         to_front = True
@@ -60,7 +66,7 @@ class Engine:
                 await action.execute(page)
                 await page.wait_for_load_state("networkidle")
             except Exception as e:
-                print(f"Path execution failed at action {action.id}: {e}")
+                self.log(f"Path execution failed at action {action.id}: {e}")
                 break
 
     def get_path_to_action(self, target_id: int) -> List[Action]:
@@ -95,6 +101,15 @@ class Engine:
             browser = await p.chromium.launch(headless=headless)
             page = await browser.new_page()
             page.on("console", self._on_console_message)
+            if self.accessibility:
+                axe_ready = await setup_axe(page)
+                if axe_ready:
+                    self.log("[Accessibility] axe-core loaded and registered.")
+                else:
+                    self.log("[Accessibility] axe-core unavailable — accessibility scans skipped.")
+            else:
+                axe_ready = False
+                self.log("[Accessibility] Accessibility analysis disabled for this scan.")
 
             # Initialize with the root URL action
             self.current_id_counter += 1
@@ -108,7 +123,7 @@ class Engine:
                     break
 
                 current_action = self.queue.popleft()
-                print(
+                self.log(
                     f"Processing Action ID {current_action.id} ({current_action.type.name}): {current_action.selector or current_action.value}"
                 )
 
@@ -119,9 +134,6 @@ class Engine:
                         ).first.is_visible()
                         if not is_visible:
                             # Backtracking
-                            print(
-                                f"Element not found for Action {current_action.id}. Start Backtracking..."
-                            )
                             path = self.get_path_to_action(current_action.id)
 
                             start_action = path[0]  # update start action for depth
@@ -131,8 +143,8 @@ class Engine:
                             if not await page.locator(
                                 current_action.selector
                             ).first.is_visible():
-                                print(
-                                    f"Backtracking failed to recover element for Action {current_action.id}."
+                                self.log(
+                                    f"Failed to recover element for Action {current_action.id}."
                                 )
                                 continue
 
@@ -204,7 +216,7 @@ class Engine:
                                 if self.in_domain and not self._is_same_domain(
                                     post_url
                                 ):
-                                    print(f"Skipping out-of-domain URL: {post_url}")
+                                    self.log(f"Skipping out-of-domain URL: {post_url}")
                                     self.actions_graph[url_action.id] = url_action
                                     self.known_selectors.add(url_action.selector)
                                 else:
@@ -224,16 +236,27 @@ class Engine:
                         and a.selector not in self.known_selectors
                     ]
 
+                    # Accessibility scan: full on URL actions, partial on interactions with DOM changes
+                    if axe_ready and current_action.type == ActionType.URL:
+                        current_action.accessibility_violations = await run_full_scan(page)
+                        if current_action.accessibility_violations:
+                            self.log(f"[Accessibility] Full scan found {len(current_action.accessibility_violations)} violation(s) on {current_action.value}")
+                    elif axe_ready and new_actions:
+                        new_selectors = [a.selector for a in new_actions]
+                        current_action.accessibility_violations = await run_partial_scan(page, new_selectors)
+                        if current_action.accessibility_violations:
+                            self.log(f"[Accessibility] Partial scan found {len(current_action.accessibility_violations)} violation(s) after action {current_action.id}")
+
                     for action in reversed(new_actions):
                         parent_for_new_actions.add_successor(action.id)
                         action.add_predecessor(parent_for_new_actions.id)
                         self.add_action(action, to_front=True)
 
                 except ActionRetryError as e:
-                    print(f"Action {current_action.id} queued for retry: {e}")
+                    self.log(f"Action {current_action.id} not available,  queued for retry: {e}")
                     self.queue.append(current_action)
                 except Exception as e:
-                    print(f"Error on action {current_action.id}: {e}")
+                    self.log(f"Error on action {current_action.id}: {e}")
 
             await browser.close()
             self.unify_urls()
@@ -310,4 +333,4 @@ class Engine:
         out_path = os.path.join(backend_dir, "result.json")
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=4)
-        print(f"Engine finished. Graph saved to {out_path}")
+        self.log(f"Engine finished. Graph saved to {out_path}")

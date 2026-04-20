@@ -26,7 +26,7 @@ class FormAction(Action):
         self.value = str(self.form_data)
 
     async def execute(self, page: Any):
-        print(f"Executing FormAction: Filling form {self.selector}")
+        self.log_fn(f"Executing FormAction: Filling form {self.selector}")
 
         form_locator = page.locator(self.selector)
 
@@ -68,7 +68,7 @@ class FormAction(Action):
                         await input_element.uncheck(force=True)
                 except Exception as e:
                     err = f"Error checking input type {input_type}: {e}"
-                    print(err)
+                    self.log_fn(err)
                     self.errors.append(err)
                 continue
 
@@ -91,7 +91,7 @@ class FormAction(Action):
                     await input_element.fill(value_to_fill)
                 except Exception as e:
                     err = f"Error filling {input_type}: {e}"
-                    print(err)
+                    self.log_fn(err)
                     self.errors.append(err)
 
         # Send form: explicit submit > single button in container > form.submit()
