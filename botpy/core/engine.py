@@ -1,8 +1,10 @@
 import asyncio
 import json
 import os
+import re
+import urllib.robotparser
 from collections import deque
-from typing import List, Set, Dict, Any
+from typing import List, Set, Dict, Any, Optional
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
 
@@ -41,12 +43,42 @@ class Engine:
         self.captured_errors: List[str] = []
         self.log = log_fn if log_fn is not None else print
 
+        self._robot_parser: Optional[urllib.robotparser.RobotFileParser] = None
+        self._crawl_delay: float = 0.0
+
+        ua = os.getenv("BOT_USER_AGENT", "")
+        match = re.search(r";\s*([A-Za-z][A-Za-z0-9_-]+)/[\d.]+", ua)
+        self._bot_name: str = match.group(1) if match else "PFGBot"
+
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.start_domain
 
     def _on_console_message(self, msg):
         if msg.type == "error":
             self.captured_errors.append(msg.text)
+
+    def _load_robots(self):
+        parsed = urlparse(self.start_url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        rp = urllib.robotparser.RobotFileParser()
+        rp.set_url(robots_url)
+        try:
+            rp.read()
+            delay = rp.crawl_delay(self._bot_name) or rp.crawl_delay("*") or 0
+            self._crawl_delay = float(delay)
+            self.log(
+                f"[Robots] {robots_url} loaded (agent={self._bot_name}, crawl-delay={self._crawl_delay}s)"
+            )
+        except Exception as e:
+            self.log(
+                f"[Robots] Could not read robots.txt: {e} — proceeding without restrictions"
+            )
+        self._robot_parser = rp
+
+    def _is_allowed(self, url: str) -> bool:
+        if self._robot_parser is None:
+            return True
+        return self._robot_parser.can_fetch(self._bot_name, url)
 
     def add_action(self, action: Action, to_front: bool = False):
         action.log_fn = self.log
@@ -98,18 +130,26 @@ class Engine:
     async def run(self):
         async with async_playwright() as p:
             headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
+            user_agent = os.getenv("BOT_USER_AGENT")
             browser = await p.chromium.launch(headless=headless)
-            page = await browser.new_page()
+            page = await browser.new_page(
+                **({"user_agent": user_agent} if user_agent else {})
+            )
             page.on("console", self._on_console_message)
+            self._load_robots()
             if self.accessibility:
                 axe_ready = await setup_axe(page)
                 if axe_ready:
                     self.log("[Accessibility] axe-core loaded and registered.")
                 else:
-                    self.log("[Accessibility] axe-core unavailable — accessibility scans skipped.")
+                    self.log(
+                        "[Accessibility] axe-core unavailable — accessibility scans skipped."
+                    )
             else:
                 axe_ready = False
-                self.log("[Accessibility] Accessibility analysis disabled for this scan.")
+                self.log(
+                    "[Accessibility] Accessibility analysis disabled for this scan."
+                )
 
             # Initialize with the root URL action
             self.current_id_counter += 1
@@ -128,6 +168,14 @@ class Engine:
                 )
 
                 try:
+                    if current_action.type == ActionType.URL and not self._is_allowed(
+                        current_action.value
+                    ):
+                        self.log(
+                            f"[Robots] Blocked by robots.txt: {current_action.value}"
+                        )
+                        continue
+
                     if current_action.type != ActionType.URL:
                         is_visible = await page.locator(
                             current_action.selector
@@ -166,7 +214,7 @@ class Engine:
 
                     # Wait for the page to settle
                     await page.wait_for_load_state("networkidle")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(max(2.0, self._crawl_delay))
 
                     # Capture errors after action settle
                     current_action.errors = self.captured_errors.copy()
@@ -200,6 +248,12 @@ class Engine:
                                 len(self.processed_urls) < self.max_pages
                                 or start_action.depth >= self.max_depth
                             ):
+                                if not self._is_allowed(post_url):
+                                    self.log(
+                                        f"[Robots] Blocked discovered URL: {post_url}"
+                                    )
+                                    continue
+
                                 self.current_id_counter += 1
                                 new_depth = start_action.depth + 1
                                 url_action = URLAction(
@@ -238,14 +292,22 @@ class Engine:
 
                     # Accessibility scan: full on URL actions, partial on interactions with DOM changes
                     if axe_ready and current_action.type == ActionType.URL:
-                        current_action.accessibility_violations = await run_full_scan(page)
+                        current_action.accessibility_violations = await run_full_scan(
+                            page
+                        )
                         if current_action.accessibility_violations:
-                            self.log(f"[Accessibility] Full scan found {len(current_action.accessibility_violations)} violation(s) on {current_action.value}")
+                            self.log(
+                                f"[Accessibility] Full scan found {len(current_action.accessibility_violations)} violation(s) on {current_action.value}"
+                            )
                     elif axe_ready and new_actions:
                         new_selectors = [a.selector for a in new_actions]
-                        current_action.accessibility_violations = await run_partial_scan(page, new_selectors)
+                        current_action.accessibility_violations = (
+                            await run_partial_scan(page, new_selectors)
+                        )
                         if current_action.accessibility_violations:
-                            self.log(f"[Accessibility] Partial scan found {len(current_action.accessibility_violations)} violation(s) after action {current_action.id}")
+                            self.log(
+                                f"[Accessibility] Partial scan found {len(current_action.accessibility_violations)} violation(s) after action {current_action.id}"
+                            )
 
                     for action in reversed(new_actions):
                         parent_for_new_actions.add_successor(action.id)
@@ -253,7 +315,9 @@ class Engine:
                         self.add_action(action, to_front=True)
 
                 except ActionRetryError as e:
-                    self.log(f"Action {current_action.id} not available,  queued for retry: {e}")
+                    self.log(
+                        f"Action {current_action.id} not available,  queued for retry: {e}"
+                    )
                     self.queue.append(current_action)
                 except Exception as e:
                     self.log(f"Error on action {current_action.id}: {e}")

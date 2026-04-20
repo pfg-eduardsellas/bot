@@ -4,4 +4,6 @@
 __pycache__/
 .vscode/
 .idea/
+.claude/
+.gitignore
 result.json
