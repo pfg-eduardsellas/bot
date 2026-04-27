@@ -92,9 +92,8 @@ async def run_scan(scan_id: int):
             max_actions=scan.max_actions,
             form_data=raw_form_data,
             in_domain=scan.in_domain,
-            accessibility=(
-                scan.accessibility if scan.accessibility is not None else True
-            ),
+            accessibility=scan.accessibility if scan.accessibility is not None else True,
+            owner_token=scan.owner.api_token if scan.owner else None,
             log_fn=logger.log,
         )
         await engine.run()

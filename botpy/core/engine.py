@@ -24,6 +24,7 @@ class Engine:
         form_data: dict = None,
         in_domain: bool = False,
         accessibility: bool = True,
+        owner_token: Optional[str] = None,
         log_fn=None,
     ):
         self.start_url = start_url
@@ -42,6 +43,9 @@ class Engine:
         self.known_selectors: Set[str] = set()
         self.captured_errors: List[str] = []
         self.log = log_fn if log_fn is not None else print
+
+        self._owner_token: Optional[str] = owner_token
+        self._verify_ownership: bool = os.getenv("BOT_VERIFY_OWNERSHIP", "true").lower() != "false"
 
         self._robot_parser: Optional[urllib.robotparser.RobotFileParser] = None
         self._crawl_delay: float = 0.0
@@ -79,6 +83,21 @@ class Engine:
         if self._robot_parser is None:
             return True
         return self._robot_parser.can_fetch(self._bot_name, url)
+
+    async def _check_ownership(self, page: Any) -> bool:
+        """Verify <meta name="testify" content="{owner_token}"> exists on the page."""
+        if not self._verify_ownership or not self._owner_token:
+            return True
+        try:
+            content = await page.evaluate("""
+                (token) => {
+                    const meta = document.querySelector('meta[name="testify"]');
+                    return meta ? meta.getAttribute('content') : null;
+                }
+            """, self._owner_token)
+            return content == self._owner_token
+        except Exception:
+            return False
 
     def add_action(self, action: Action, to_front: bool = False):
         action.log_fn = self.log
@@ -215,6 +234,12 @@ class Engine:
                     # Wait for the page to settle
                     await page.wait_for_load_state("networkidle")
                     await asyncio.sleep(max(2.0, self._crawl_delay))
+
+                    # Verify site ownership via meta tag on URL actions
+                    if current_action.type == ActionType.URL:
+                        if not await self._check_ownership(page):
+                            self.log(f"[Ownership] Missing <meta name=\"testify\" content=\"...\"> on {current_action.value} — skipping")
+                            continue
 
                     # Capture errors after action settle
                     current_action.errors = self.captured_errors.copy()

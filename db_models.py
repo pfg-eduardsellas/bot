@@ -19,6 +19,7 @@ class Scan(Base):
     __tablename__ = "scans"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     target_url = Column(String, nullable=False)
     status = Column(String, default="pending")  # pending | running | done | error
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -31,6 +32,7 @@ class Scan(Base):
     max_actions = Column(Integer, default=50, nullable=False)
     accessibility = Column(Boolean, default=True, nullable=False)
 
+    owner = relationship("User", back_populates="scans")
     actions = relationship(
         "ActionRecord", back_populates="scan", cascade="all, delete-orphan"
     )
@@ -138,4 +140,9 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=True)
+    api_token = Column(String, unique=True, nullable=False)
+    google_id = Column(String, unique=True, nullable=True, index=True)
+
+    scans = relationship("Scan", back_populates="owner")
