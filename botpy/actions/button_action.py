@@ -1,6 +1,10 @@
+import asyncio
+import os
 from typing import Any
 from botpy.models.action import Action, ActionType, ActionRetryError
-import asyncio
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+_HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 
 
 class ButtonAction(Action):
@@ -9,14 +13,11 @@ class ButtonAction(Action):
 
     async def execute(self, page: Any):
         self.log_fn(f"Executing ButtonAction: Clicking {self.selector}")
-        try:
-            # Use .first() to handle cases where the selector matches multiple elements
-            locator = page.locator(self.selector).first
+        # Use .first() to handle cases where the selector matches multiple elements
+        locator = page.locator(self.selector).first
 
-            # Ensure it's in view
+        if not _HEADLESS:
             await locator.scroll_into_view_if_needed()
-
-            # Custom high-visibility highlight using JS
             await locator.evaluate(
                 """
                 (el) => {
@@ -24,7 +25,6 @@ class ButtonAction(Action):
                     el.style.outline = '5px solid red';
                     el.style.outlineOffset = '2px';
                     el.style.transition = 'outline 0.1s ease-in-out';
-                    
                     let count = 0;
                     const interval = setInterval(() => {
                         el.style.outlineColor = count % 2 === 0 ? 'yellow' : 'red';
@@ -37,33 +37,21 @@ class ButtonAction(Action):
                 }
             """
             )
-
-            await asyncio.sleep(1.0)  # Wait for highlight to be noticed
-
-            try:
-                click_timeout = 11000 if self.retry_count > 0 else 5000
-                async with page.expect_navigation(
-                    wait_until="networkidle", timeout=2000
-                ):
-                    await locator.click(timeout=click_timeout)
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                self.errors.append(f"Click failed: {str(e)}")
-
-                if self.retry_count == 0:
-                    self.retry_count += 1
-                    raise ActionRetryError(
-                        f"First click attempt failed. Retrying later."
-                    )
-                else:
-                    self.errors.append(
-                        "Action permanently failed after second attempt."
-                    )
-                    raise e
-
-        except ActionRetryError as e:
-            raise e
+            await asyncio.sleep(1.0)
+        try:
+            click_timeout = 11000 if self.retry_count > 0 else 5000
+            await locator.click(timeout=click_timeout)
         except Exception as e:
-            self.log_fn(f"Error on ButtonAction: {e}")
-            raise e  # Raise to trigger backtracking in engine if needed
+            self.errors.append(f"Click failed: {str(e)}")
+            if self.retry_count == 0:
+                self.retry_count += 1
+                self.log_fn(
+                    f"Action {current_action.id} not available,  queued for retry."
+                )
+                raise ActionRetryError(f"Click failed on first attempt: {str(e)}")
+            else:
+                self.errors.append("Action permanently failed after second attempt.")
+                self.log_fn(
+                    f"Action {current_action.id} not available. Marked as failed after retry."
+                )
+                raise e

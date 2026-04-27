@@ -45,7 +45,9 @@ class Engine:
         self.log = log_fn if log_fn is not None else print
 
         self._owner_token: Optional[str] = owner_token
-        self._verify_ownership: bool = os.getenv("BOT_VERIFY_OWNERSHIP", "true").lower() != "false"
+        self._verify_ownership: bool = (
+            os.getenv("BOT_VERIFY_OWNERSHIP", "true").lower() != "false"
+        )
 
         self._robot_parser: Optional[urllib.robotparser.RobotFileParser] = None
         self._crawl_delay: float = 0.0
@@ -89,12 +91,15 @@ class Engine:
         if not self._verify_ownership or not self._owner_token:
             return True
         try:
-            content = await page.evaluate("""
+            content = await page.evaluate(
+                """
                 (token) => {
                     const meta = document.querySelector('meta[name="testify"]');
                     return meta ? meta.getAttribute('content') : null;
                 }
-            """, self._owner_token)
+            """,
+                self._owner_token,
+            )
             return content == self._owner_token
         except Exception:
             return False
@@ -231,15 +236,17 @@ class Engine:
                     # Execute the action
                     await current_action.execute(page)
 
-                    # Wait for the page to settle
-                    await page.wait_for_load_state("networkidle")
-                    await asyncio.sleep(max(2.0, self._crawl_delay))
+                    # Wait page loading and potential DOM updates after the action
+                    await page.wait_for_load_state("domcontentloaded")  # HTML is there
 
-                    # Verify site ownership via meta tag on URL actions
-                    if current_action.type == ActionType.URL:
-                        if not await self._check_ownership(page):
-                            self.log(f"[Ownership] Missing <meta name=\"testify\" content=\"...\"> on {current_action.value} — skipping")
-                            continue
+                    try:
+                        await page.wait_for_load_state(
+                            "networkidle", timeout=5000
+                        )  # Maybe there are some polling, max wait 5s
+                    except Exception:
+                        self.log("Network didn't settle, but proceeding anyway...")
+
+                    await asyncio.sleep(max(2.0, self._crawl_delay))
 
                     # Capture errors after action settle
                     current_action.errors = self.captured_errors.copy()
@@ -252,6 +259,13 @@ class Engine:
 
                     # URL CHANGED (New page)
                     if post_url != pre_url and current_action.type != ActionType.URL:
+
+                        # Verify site ownership via meta tag on URL actions
+                        if not await self._check_ownership(page):
+                            msg = f'Missing <meta name="testify" content="[token]"> — ownership not verified'
+                            self.log(f"[Ownership] {msg} on {current_action.value}")
+                            current_action.errors.append(msg)
+                            continue
 
                         # Check if this URL already exists in our graph
                         existing_url_id = None
@@ -340,10 +354,8 @@ class Engine:
                         self.add_action(action, to_front=True)
 
                 except ActionRetryError as e:
-                    self.log(
-                        f"Action {current_action.id} not available,  queued for retry: {e}"
-                    )
                     self.queue.append(current_action)
+
                 except Exception as e:
                     self.log(f"Error on action {current_action.id}: {e}")
 
