@@ -201,9 +201,7 @@ class Engine:
                         continue
 
                     if current_action.type != ActionType.URL:
-                        is_visible = await page.locator(
-                            current_action.selector
-                        ).first.is_visible()
+                        is_visible = await current_action.get_locator(page).is_visible()
                         if not is_visible:
                             # Backtracking
                             path = self.get_path_to_action(current_action.id)
@@ -212,9 +210,7 @@ class Engine:
                             await self.execute_path(page, path)
 
                             # Re-verify visibility
-                            if not await page.locator(
-                                current_action.selector
-                            ).first.is_visible():
+                            if not await current_action.get_locator(page).is_visible():
                                 self.log(
                                     f"Failed to recover element for Action {current_action.id}."
                                 )

@@ -8,13 +8,18 @@ _HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 
 
 class ButtonAction(Action):
-    def __init__(self, id: int, selector: str, custom_id: str = ""):
-        super().__init__(id, ActionType.BUTTON, selector=selector, custom_id=custom_id)
+    def __init__(self, id: int, selector: str, index: int = 0, custom_id: str = ""):
+        unique_selector = f"{selector}::nth={index}" if index > 0 else selector
+        super().__init__(id, ActionType.BUTTON, selector=unique_selector, custom_id=custom_id)
+        self._base_selector = selector
+        self.index = index
+
+    def get_locator(self, page: Any):
+        return page.locator(self._base_selector).nth(self.index)
 
     async def execute(self, page: Any):
-        self.log_fn(f"Executing ButtonAction: Clicking {self.selector}")
-        # Use .first() to handle cases where the selector matches multiple elements
-        locator = page.locator(self.selector).first
+        self.log_fn(f"Executing ButtonAction: Clicking {self._base_selector}[{self.index}]")
+        locator = self.get_locator(page)
 
         if not _HEADLESS:
             await locator.scroll_into_view_if_needed()
@@ -45,13 +50,9 @@ class ButtonAction(Action):
             self.errors.append(f"Click failed: {str(e)}")
             if self.retry_count == 0:
                 self.retry_count += 1
-                self.log_fn(
-                    f"Action {current_action.id} not available,  queued for retry."
-                )
+                self.log_fn(f"Action {self.id} not available, queued for retry.")
                 raise ActionRetryError(f"Click failed on first attempt: {str(e)}")
             else:
                 self.errors.append("Action permanently failed after second attempt.")
-                self.log_fn(
-                    f"Action {current_action.id} not available. Marked as failed after retry."
-                )
+                self.log_fn(f"Action {self.id} not available. Marked as failed after retry.")
                 raise e

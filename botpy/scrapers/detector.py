@@ -25,31 +25,47 @@ class Detector:
         new_actions = []
         processed_ids = set()  # prevent duplicate selectors
 
-        # Detect Buttons
-        buttons = await page.locator(
-            "button, input[type='button'], input[type='submit']"
-        ).all()
+        # Detect Buttons — first pass: collect base selectors to count duplicates
+        buttons = await page.locator("button, input[type='button']").all()
+        button_entries = []  # (base_selector, is_id_unique)
+        selector_count: dict = {}
         for i, btn in enumerate(buttons):
             if await btn.is_visible():
                 elem_id = await btn.get_attribute("id")
                 if elem_id and elem_id not in processed_ids:
-                    selector = f"#{elem_id}"
                     processed_ids.add(elem_id)
+                    button_entries.append((f"#{elem_id}", True))
                 else:
                     raw_text = await btn.text_content()
                     safe_text = self._sanitize_text(raw_text)
-                    selector = (
+                    base = (
                         f"button:has-text('{safe_text}')"
                         if safe_text
                         else f"button:nth-of-type({i+1})"
                     )
+                    button_entries.append((base, False))
+                    selector_count[base] = selector_count.get(base, 0) + 1
 
-                action_id = current_id_counter + len(new_actions) + 1
-                new_actions.append(
-                    ButtonAction(
-                        id=action_id, selector=selector, custom_id=f"btn_{action_id}"
-                    )
+        # Second pass: assign nth indices in reverse so highest index is clicked first
+        selector_next_index: dict = {
+            sel: count - 1 for sel, count in selector_count.items()
+        }
+        for base_selector, is_id_unique in button_entries:
+            if is_id_unique:
+                index = 0
+            else:
+                index = selector_next_index[base_selector]
+                selector_next_index[base_selector] -= 1
+
+            action_id = current_id_counter + len(new_actions) + 1
+            new_actions.append(
+                ButtonAction(
+                    id=action_id,
+                    selector=base_selector,
+                    index=index,
+                    custom_id=f"btn_{action_id}",
                 )
+            )
 
         # 2. Detect Links
         links = await page.locator("a[href]").all()

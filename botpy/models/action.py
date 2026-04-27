@@ -44,12 +44,12 @@ class Action(ABC):
         if action_id not in self.successors:
             self.successors.append(action_id)
 
+    def get_locator(self, page: Any):
+        """Returns the Playwright locator for this action. Override in subclasses when needed."""
+        return page.locator(self.selector)
+
     @abstractmethod
     async def execute(self, page: Any):
-        """
-        Executes the action on the given Playwright page.
-        :param page: playwright.async_api.Page
-        """
         pass
 
     def to_dict(self) -> Dict[str, Any]:
