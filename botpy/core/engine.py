@@ -211,9 +211,9 @@ class Engine:
 
                             # Re-verify visibility
                             if not await current_action.get_locator(page).is_visible():
-                                self.log(
-                                    f"Failed to recover element for Action {current_action.id}."
-                                )
+                                msg = f"Element not visible after backtracking: {current_action.selector}"
+                                self.log(f"Failed to recover element for Action {current_action.id}.")
+                                current_action.errors.append(msg)
                                 continue
 
                     # To check if the URL changed

@@ -15,5 +15,4 @@ class URLAction(Action):
     async def execute(self, page: Any):
         self.log_fn(f"Executing URLAction: Navigating to {self.value}")
 
-        # Verify token on metadata
         await page.goto(self.value)
