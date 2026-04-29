@@ -36,6 +36,8 @@ class FormAction(Action):
         for input_element in inputs:
             if not await input_element.is_visible():
                 continue
+            if not await input_element.is_editable():
+                continue
 
             tag_name = await input_element.evaluate(
                 "el => el.tagName.toLowerCase()"

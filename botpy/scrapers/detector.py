@@ -115,14 +115,9 @@ class Detector:
             f"""
             () => {{
                 {_DOM_PATH_FN}
-                function isVisible(el) {{
-                    if (!el.offsetParent) return false;
-                    const s = getComputedStyle(el);
-                    return s.visibility !== 'hidden' && s.display !== 'none';
-                }}
                 const SEL = "button, input[type='button'], input[type='submit'], [role='button'], [onclick]";
                 return Array.from(document.querySelectorAll(SEL))
-                    .filter(isVisible)
+                    .filter(el => el.checkVisibility({{ visibilityProperty: true }}))
                     .map(el => ({{
                         id: el.id || '',
                         tag: el.tagName.toLowerCase(),
@@ -143,16 +138,11 @@ class Detector:
             () => {{
                 {_DOM_PATH_FN}
                 const COVERED = "button, input, [role='button'], [onclick], a";
-                function isVisible(el) {{
-                    if (!el.offsetParent) return false;
-                    const s = getComputedStyle(el);
-                    return s.visibility !== 'hidden' && s.display !== 'none';
-                }}
                 return Array.from(document.querySelectorAll('*'))
                     .filter(el =>
                         !el.matches(COVERED) &&
                         !el.closest(COVERED) &&
-                        isVisible(el) &&
+                        el.checkVisibility({{ visibilityProperty: true }}) &&
                         getComputedStyle(el).cursor === 'pointer'
                     )
                     .map(el => ({{
@@ -170,11 +160,9 @@ class Detector:
     async def _detect_links(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[LinkAction]:
-        links = await page.locator("a[href]").all()
+        links = await page.locator("a[href]:visible").all()
         actions: List[LinkAction] = []
         for link in links:
-            if not await link.is_visible():
-                continue
             href = await link.get_attribute("href")
             if (
                 not href
@@ -203,68 +191,50 @@ class Detector:
     ) -> List[FormAction]:
         actions: List[FormAction] = []
 
-        forms = await page.locator("form, [role='form'], [role='search']").all()
-        for i, form in enumerate(forms):
-            if not await form.is_visible():
-                continue
-            elem_id = await form.get_attribute("id")
-            if elem_id and elem_id not in processed_ids:
-                selector = f"#{elem_id}"
-                processed_ids.add(elem_id)
-            else:
-                selector = f"form:nth-of-type({i + 1})"
-            action_id = id_offset + len(actions) + 1
-            actions.append(
-                FormAction(
-                    id=action_id,
-                    selector=selector,
-                    form_data=self.form_data,
-                    custom_id=f"frm_{action_id}",
-                )
-            )
-
-        implicit_forms = await page.evaluate(
-            """
-            () => {
+        # Group visible inputs by their form ancestor (or nearest common container).
+        # We check input visibility rather than form visibility because a <form> element
+        # can have zero height while its inputs are still visible (overflow, absolute pos).
+        groups = await page.evaluate(
+            f"""
+            () => {{
+                {_DOM_PATH_FN}
                 const INPUT_SEL = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select';
-                function isVisible(el) {
-                    return el.offsetParent !== null && getComputedStyle(el).visibility !== 'hidden';
-                }
-                function buildSelector(el) {
-                    if (el.id) return '#' + CSS.escape(el.id);
-                    const tag = el.tagName.toLowerCase();
-                    const siblings = Array.from(el.parentElement?.children || []).filter(c => c.tagName === el.tagName);
-                    const nth = siblings.indexOf(el) + 1;
-                    if (el.parentElement && el.parentElement !== document.body) {
-                        return buildSelector(el.parentElement) + ' > ' + tag + ':nth-of-type(' + nth + ')';
-                    }
-                    return tag + ':nth-of-type(' + nth + ')';
-                }
-                const orphanInputs = Array.from(document.querySelectorAll(INPUT_SEL))
-                    .filter(el => !el.closest('form') && isVisible(el));
-                const seen = new Map();
-                for (const input of orphanInputs) {
-                    let container = input.parentElement;
-                    while (container && container !== document.body) {
-                        if (container.querySelectorAll(INPUT_SEL).length > 1) break;
-                        container = container.parentElement;
-                    }
-                    if (!container || container === document.body) continue;
-                    const sel = buildSelector(container);
-                    if (!seen.has(sel)) {
-                        seen.set(sel, { selector: sel });
-                    }
-                }
-                return Array.from(seen.values());
-            }
+                const visibleInputs = Array.from(document.querySelectorAll(INPUT_SEL))
+                    .filter(el => el.checkVisibility({{ visibilityProperty: true }}));
+                const groups = new Map();
+                for (const input of visibleInputs) {{
+                    const formEl = input.closest('form, [role="form"], [role="search"]');
+                    if (formEl) {{
+                        const key = formEl.id || getDomPath(formEl);
+                        const sel = formEl.id ? '#' + CSS.escape(formEl.id) : getDomPath(formEl);
+                        if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: formEl.id || '' }});
+                    }} else {{
+                        let container = input.parentElement;
+                        while (container && container !== document.body) {{
+                            const cnt = Array.from(container.querySelectorAll(INPUT_SEL))
+                                .filter(el => el.checkVisibility({{ visibilityProperty: true }})).length;
+                            if (cnt > 1) break;
+                            container = container.parentElement;
+                        }}
+                        if (!container || container === document.body) continue;
+                        const key = container.id || getDomPath(container);
+                        const sel = container.id ? '#' + CSS.escape(container.id) : getDomPath(container);
+                        if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: container.id || '' }});
+                    }}
+                }}
+                return Array.from(groups.values());
+            }}
             """
         )
 
-        for form_info in implicit_forms:
-            selector = form_info["selector"]
-            if selector in processed_ids:
+        for group in groups:
+            selector = group["selector"]
+            elem_id = group.get("elemId", "")
+            if selector in processed_ids or (elem_id and elem_id in processed_ids):
                 continue
             processed_ids.add(selector)
+            if elem_id:
+                processed_ids.add(elem_id)
             action_id = id_offset + len(actions) + 1
             actions.append(
                 FormAction(
