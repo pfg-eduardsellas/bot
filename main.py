@@ -67,8 +67,6 @@ def fire_due_schedules(current_hour: datetime):
 
 
 # region Scan
-
-
 async def run_scan(scan_id: int):
     """Process a single scan: run the engine and save results to DB."""
     logger = BotLogger(scan_id)
@@ -171,7 +169,6 @@ async def run_scan(scan_id: int):
 
 
 # endregion
-
 
 # region Test Path
 

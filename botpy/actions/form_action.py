@@ -34,9 +34,12 @@ class FormAction(Action):
         inputs = await form_locator.locator("input, textarea").all()
 
         for input_element in inputs:
+            if not await input_element.is_visible():
+                continue
+
             tag_name = await input_element.evaluate(
                 "el => el.tagName.toLowerCase()"
-            )  # get input or textarea
+            )
 
             if tag_name == "textarea":
                 input_type = "text"
@@ -94,22 +97,27 @@ class FormAction(Action):
                     self.log_fn(err)
                     self.errors.append(err)
 
-        # Send form: explicit submit > single button in container > form.submit()
+        # Send form: explicit submit > any single button > form.submit() > Enter key
         try:
             explicit_submit = form_locator.locator(
                 "button[type='submit'], input[type='submit']"
             )
-            all_buttons = form_locator.locator("button, input[type='button']")
+            all_buttons = form_locator.locator("button:visible, input[type='button']:visible")
 
             if await explicit_submit.count() > 0:
                 await explicit_submit.first.click()
             elif await all_buttons.count() == 1:
                 await all_buttons.first.click()
             else:
-                await form_locator.evaluate(
-                    "el => { if (el.tagName === 'FORM') el.submit(); }"
+                submitted = await form_locator.evaluate(
+                    "el => { if (el.tagName === 'FORM') { el.submit(); return true; } return false; }"
                 )
+                if not submitted:
+                    # Implicit form (div container) with no button — press Enter on last visible input
+                    visible_inputs = [i for i in inputs if await i.is_visible()]
+                    if visible_inputs:
+                        await visible_inputs[-1].press("Enter")
         except Exception as e:
             err = f"Error submitting form {self.selector}: {e}"
-            print(err)
+            self.log_fn(err)
             self.errors.append(err)

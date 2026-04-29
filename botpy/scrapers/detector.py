@@ -12,7 +12,7 @@ _DOM_PATH_FN = """
         if (!node || node.tagName === 'BODY') return 'body';
         let part = node.tagName.toLowerCase();
         if (node.id) return part + '#' + CSS.escape(node.id);
-        const classes = Array.from(node.classList).filter(c => c).slice(0, 2).join('.');
+        const classes = Array.from(node.classList).filter(c => c).slice(0, 2).map(c => CSS.escape(c)).join('.');
         if (classes) part += '.' + classes;
         const siblings = Array.from(node.parentElement?.children || [])
             .filter(c => c.tagName === node.tagName);
