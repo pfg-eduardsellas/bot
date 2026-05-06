@@ -6,7 +6,7 @@ from botpy.actions.button_action import ButtonAction
 from botpy.actions.link_action import LinkAction
 from botpy.actions.form_action import FormAction
 
-# JS function injected into evaluate() calls to compute a CSS-path for an element.
+# DOM path with classes — used only for deduplication (more specific matching).
 _DOM_PATH_FN = """
     function getDomPath(node) {
         if (!node || node.tagName === 'BODY') return 'body';
@@ -16,15 +16,27 @@ _DOM_PATH_FN = """
         if (classes) part += '.' + classes;
         const siblings = Array.from(node.parentElement?.children || [])
             .filter(c => c.tagName === node.tagName);
-        if (siblings.length > 1) part += ':nth-child(' + (siblings.indexOf(node) + 1) + ')';
+        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
         return getDomPath(node.parentElement) + ' > ' + part;
     }
 """
 
+# CSS path without classes — used as the stable fallback selector.
+_CSS_PATH_FN = """
+    function getCssPath(node) {
+        if (!node || node.tagName === 'BODY') return 'body';
+        let part = node.tagName.toLowerCase();
+        if (node.id) return part + '#' + CSS.escape(node.id);
+        const siblings = Array.from(node.parentElement?.children || [])
+            .filter(c => c.tagName === node.tagName);
+        if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
+        return getCssPath(node.parentElement) + ' > ' + part;
+    }
+"""
 
-# Do not consider elements with the same base path (ignoring nth-child) as separate actions,
+
 def _sibling_key(dom_path: str) -> str:
-    return re.compile(r":nth-child\(\d+\)").sub("", dom_path)
+    return re.compile(r":nth-(?:child|of-type)\(\d+\)").sub("", dom_path)
 
 
 class Detector:
@@ -38,12 +50,29 @@ class Detector:
         cleaned = " ".join(text.split())
         return cleaned.replace("'", "\\'")
 
+    def _build_stable_selector(self, item: dict) -> str:
+        """Build a stable Playwright-compatible selector from element attributes.
+
+        Priority: id > data-testid > aria-label > tag:has-text > CSS path (no classes).
+        """
+        if item.get("id"):
+            return f"#{item['id']}"
+        testid = item.get("data_testid", "")
+        if testid:
+            return f'[data-testid="{testid}"]'
+        aria = item.get("aria_label", "")
+        if aria:
+            return f'[aria-label="{aria}"]'
+        text = item.get("text", "").replace('"', "").strip()
+        if text:
+            return f"{item['tag']}:has-text(\"{text}\")"
+        return item["css_path"]
+
     def _entries_to_button_actions(
         self,
         entries: List[str],
         id_offset: int,
     ) -> List[ButtonAction]:
-        """Convert a list of unique selectors ('#id' or DOM path) to ButtonActions."""
         actions: List[ButtonAction] = []
         for selector in entries:
             action_id = id_offset + len(actions) + 1
@@ -58,12 +87,7 @@ class Detector:
         return actions
 
     def _remove_descendants(self, raw: List[dict]) -> List[dict]:
-        """Drop elements whose DOM path starts with another element's path.
-
-        If element A contains element B (both detected as cursor:pointer),
-        B only inherits the style from A — keep A (the actual clickable container)
-        and discard B.
-        """
+        """Drop elements whose DOM path starts with another element's path."""
         paths = [item["path"] for item in raw]
         return [
             item
@@ -80,10 +104,7 @@ class Detector:
         raw: List[dict],
         processed_ids: set,
     ) -> List[str]:
-        """Filter JS element dicts by sibling key and return unique selectors.
-
-        Returns '#id' for elements with an id, or the full DOM path otherwise.
-        """
+        """Deduplicate by sibling key (using class-aware path) and return stable selectors."""
         raw = self._remove_descendants(raw)
         seen_siblings: set = set()
         selectors: List[str] = []
@@ -100,9 +121,8 @@ class Detector:
 
             if elem_id:
                 processed_ids.add(elem_id)
-                selectors.append(f"#{elem_id}")
-            else:
-                selectors.append(item["path"])
+
+            selectors.append(self._build_stable_selector(item))
 
         return selectors
 
@@ -115,14 +135,18 @@ class Detector:
             f"""
             () => {{
                 {_DOM_PATH_FN}
+                {_CSS_PATH_FN}
                 const SEL = "button, input[type='button'], input[type='submit'], [role='button'], [onclick]";
                 return Array.from(document.querySelectorAll(SEL))
                     .filter(el => el.checkVisibility({{ visibilityProperty: true }}))
                     .map(el => ({{
                         id: el.id || '',
                         tag: el.tagName.toLowerCase(),
-                        text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
+                        text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+                        aria_label: el.getAttribute('aria-label') || '',
+                        data_testid: el.getAttribute('data-testid') || '',
                         path: getDomPath(el),
+                        css_path: getCssPath(el),
                     }}));
             }}
             """
@@ -137,6 +161,7 @@ class Detector:
             f"""
             () => {{
                 {_DOM_PATH_FN}
+                {_CSS_PATH_FN}
                 const COVERED = "button, input, [role='button'], [onclick], a";
                 return Array.from(document.querySelectorAll('*'))
                     .filter(el =>
@@ -148,8 +173,11 @@ class Detector:
                     .map(el => ({{
                         id: el.id || '',
                         tag: el.tagName.toLowerCase(),
-                        text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
+                        text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+                        aria_label: el.getAttribute('aria-label') || '',
+                        data_testid: el.getAttribute('data-testid') || '',
                         path: getDomPath(el),
+                        css_path: getCssPath(el),
                     }}));
             }}
             """
@@ -191,13 +219,11 @@ class Detector:
     ) -> List[FormAction]:
         actions: List[FormAction] = []
 
-        # Group visible inputs by their form ancestor (or nearest common container).
-        # We check input visibility rather than form visibility because a <form> element
-        # can have zero height while its inputs are still visible (overflow, absolute pos).
         groups = await page.evaluate(
             f"""
             () => {{
                 {_DOM_PATH_FN}
+                {_CSS_PATH_FN}
                 const INPUT_SEL = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select';
                 const visibleInputs = Array.from(document.querySelectorAll(INPUT_SEL))
                     .filter(el => el.checkVisibility({{ visibilityProperty: true }}));
@@ -206,7 +232,7 @@ class Detector:
                     const formEl = input.closest('form, [role="form"], [role="search"]');
                     if (formEl) {{
                         const key = formEl.id || getDomPath(formEl);
-                        const sel = formEl.id ? '#' + CSS.escape(formEl.id) : getDomPath(formEl);
+                        const sel = formEl.id ? '#' + CSS.escape(formEl.id) : getCssPath(formEl);
                         if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: formEl.id || '' }});
                     }} else {{
                         let container = input.parentElement;
@@ -218,7 +244,7 @@ class Detector:
                         }}
                         if (!container || container === document.body) continue;
                         const key = container.id || getDomPath(container);
-                        const sel = container.id ? '#' + CSS.escape(container.id) : getDomPath(container);
+                        const sel = container.id ? '#' + CSS.escape(container.id) : getCssPath(container);
                         if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: container.id || '' }});
                     }}
                 }}

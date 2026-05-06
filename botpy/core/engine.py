@@ -35,7 +35,7 @@ class Engine:
         self.accessibility = accessibility
         self.start_domain = urlparse(start_url).netloc
 
-        self.queue: deque[Action] = deque()
+        self.page_queues: Dict[str, deque[Action]] = {}
         self.actions_graph: Dict[int, Action] = {}
         self.known_selectors: Set[str] = set()
         self.processed_urls: Set[str] = set()
@@ -66,10 +66,24 @@ class Engine:
         self.known_selectors.add(action.selector)
         self.current_id_counter = max(self.current_id_counter, action.id)
 
-    def add_action(self, action: Action):
-        """Register action and push it to the front of the execution queue."""
+    def _get_queue(self, url: str) -> deque:
+        if url not in self.page_queues:
+            self.page_queues[url] = deque()
+        return self.page_queues[url]
+
+    def add_action(self, action: Action, page_url: str):
+        """Register action and push it to the front of its page queue."""
         self._register_action(action)
-        self.queue.appendleft(action)
+        self._get_queue(page_url).appendleft(action)
+
+    def _next_action(self, current_url: str) -> Tuple[Optional[Action], str]:
+        """Pop the next action: prefer current page, else first page with pending actions."""
+        if current_url in self.page_queues and self.page_queues[current_url]:
+            return self.page_queues[current_url].popleft(), current_url
+        for url, queue in self.page_queues.items():
+            if queue:
+                return queue.popleft(), url
+        return None, current_url
 
     def get_path_to_action(self, target_id: int) -> List[Action]:
         """Return the ordered list of actions to replay to reach target_id."""
@@ -291,7 +305,8 @@ class Engine:
         current_action: Action,
         start_action: Action,
         axe_ready: bool,
-    ) -> Action:
+        current_url: str,
+    ) -> Tuple[Action, str]:
         """
         Execute one action and handle all side effects.
         Returns the (possibly updated) start_action for depth tracking.
@@ -301,7 +316,7 @@ class Engine:
             current_action.value
         ):
             self.log(f"[Robots] Blocked by robots.txt: {current_action.value}")
-            return start_action
+            return start_action, current_url
 
         # Ensure the element is still visible; backtrack if needed
         if current_action.type != ActionType.URL:
@@ -312,7 +327,7 @@ class Engine:
                 if new_start:
                     start_action = new_start
                 if not success:
-                    return start_action
+                    return start_action, current_url
 
         pre_url = (
             current_action.value if current_action.type == ActionType.URL else page.url
@@ -340,7 +355,7 @@ class Engine:
                 )
             )
             if blocked:
-                return start_action
+                return start_action, current_url
 
         # Detect elements that appeared after the action
         post_actions = await self.detector.detect(page, self.current_id_counter)
@@ -357,9 +372,9 @@ class Engine:
         for action in reversed(new_actions):
             parent_for_new_actions.add_successor(action.id)
             action.add_predecessor(parent_for_new_actions.id)
-            self.add_action(action)
+            self.add_action(action, post_url)
 
-        return start_action
+        return start_action, post_url
 
     # endregion
     # region browser setup
@@ -399,13 +414,17 @@ class Engine:
             start_action = URLAction(
                 id=self.current_id_counter, url=self.start_url, depth=0
             )
-            self.add_action(start_action)
+            self.add_action(start_action, self.start_url)
 
-            while self.queue:
+            current_url = self.start_url
+            while True:
                 if len(self.actions_graph) >= self.max_actions:
                     break
 
-                current_action = self.queue.popleft()
+                current_action, current_url = self._next_action(current_url)
+                if current_action is None:
+                    break
+
                 self.log(
                     f"Processing Action ID {current_action.id} "
                     f"({current_action.type.name}): "
@@ -413,13 +432,15 @@ class Engine:
                 )
 
                 try:
-                    start_action = await self._process_action(
-                        page, current_action, start_action, axe_ready
+                    start_action, current_url = await self._process_action(
+                        page, current_action, start_action, axe_ready, current_url
                     )
                 except ActionRetryError:
-                    self.queue.append(current_action)
+                    self._get_queue(current_url).append(current_action)
+                    current_url = page.url
                 except Exception as e:
                     self.log(f"Error on action {current_action.id}: {e}")
+                    current_url = page.url
 
             await browser.close()
             self.unify_urls()
