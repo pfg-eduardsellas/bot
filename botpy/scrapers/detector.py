@@ -60,7 +60,7 @@ class Detector:
         testid = item.get("data_testid", "")
         if testid:
             return f'[data-testid="{testid}"]'
-        aria = item.get("aria_label", "")
+        aria = item.get("aria_label", "").replace('"', "").strip()
         if aria:
             return f'[aria-label="{aria}"]'
         text = item.get("text", "").replace('"', "").strip()
@@ -128,7 +128,7 @@ class Detector:
 
     # region detectors
 
-    async def _detect_buttons(
+    async def _detect_clickable(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[ButtonAction]:
         raw = await page.evaluate(
@@ -136,39 +136,19 @@ class Detector:
             () => {{
                 {_DOM_PATH_FN}
                 {_CSS_PATH_FN}
-                const SEL = "button, input[type='button'], input[type='submit'], [role='button'], [onclick]";
-                return Array.from(document.querySelectorAll(SEL))
-                    .filter(el => el.checkVisibility({{ visibilityProperty: true }}))
-                    .map(el => ({{
-                        id: el.id || '',
-                        tag: el.tagName.toLowerCase(),
-                        text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
-                        aria_label: el.getAttribute('aria-label') || '',
-                        data_testid: el.getAttribute('data-testid') || '',
-                        path: getDomPath(el),
-                        css_path: getCssPath(el),
-                    }}));
-            }}
-            """
-        )
-        entries = self._deduplicate_siblings(raw, processed_ids)
-        return self._entries_to_button_actions(entries, id_offset)
-
-    async def _detect_pointer_elements(
-        self, page: Any, processed_ids: set, id_offset: int
-    ) -> List[ButtonAction]:
-        raw = await page.evaluate(
-            f"""
-            () => {{
-                {_DOM_PATH_FN}
-                {_CSS_PATH_FN}
-                const COVERED = "button, input, [role='button'], [onclick], a";
+                const SEMANTIC = "button, input[type='button'], input[type='submit'], [role='button'], [onclick]";
+                const INSIDE   = "button, input, [role='button'], [onclick], a";
                 return Array.from(document.querySelectorAll('*'))
                     .filter(el =>
-                        !el.matches(COVERED) &&
-                        !el.closest(COVERED) &&
                         el.checkVisibility({{ visibilityProperty: true }}) &&
-                        getComputedStyle(el).cursor === 'pointer'
+                        (
+                            el.matches(SEMANTIC) ||
+                            (
+                                !el.matches(INSIDE) &&
+                                !el.closest(INSIDE) &&
+                                getComputedStyle(el).cursor === 'pointer'
+                            )
+                        )
                     )
                     .map(el => ({{
                         id: el.id || '',
@@ -279,8 +259,7 @@ class Detector:
 
         for detect_fn in (
             self._detect_forms,
-            self._detect_pointer_elements,
-            self._detect_buttons,
+            self._detect_clickable,
             self._detect_links,
         ):
             batch = await detect_fn(

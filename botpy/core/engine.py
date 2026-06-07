@@ -155,7 +155,7 @@ class Engine:
 
     # region helpers
 
-    def _on_console_message(self, msg):  # is used?
+    def _on_console_message(self, msg):
         if msg.type == "error":
             self.captured_errors.append(msg.text)
 
@@ -360,7 +360,8 @@ class Engine:
         # Detect elements that appeared after the action
         post_actions = await self.detector.detect(page, self.current_id_counter)
         new_actions = [
-            a for a in post_actions
+            a
+            for a in post_actions
             if a.selector not in pre_selectors
             and a.selector not in self.known_selectors
         ]
