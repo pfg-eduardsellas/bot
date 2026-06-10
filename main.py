@@ -223,7 +223,7 @@ async def run_test_path_run(run_id: int):
         db.close()
         return
 
-    result = await execute_test_path(node_ids, action_map, form_data, scan.id)
+    result = await execute_test_path(node_ids, action_map, form_data, scan.id, assertions=test_path.assertions or {})
 
     try:
         run.status = "pass" if result["passed"] else "fail"

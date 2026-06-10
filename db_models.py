@@ -91,6 +91,7 @@ class TestPath(Base):
     enabled = Column(Boolean, default=False, nullable=False)
     days_of_week = Column(String, nullable=True)
     hours = Column(String, nullable=True)
+    assertions = Column(JSON, nullable=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     scan = relationship("Scan", back_populates="test_paths")
