@@ -96,7 +96,11 @@ async def run_scan(scan_id: int):
             owner_token=scan.owner.api_token if scan.owner else None,
             log_fn=logger.log,
         )
-        await engine.run()
+        if scan.objective:
+            logger.log(f"[Worker] IA mode — objective: {scan.objective}")
+            await engine.run_IA(target_goal=scan.objective)
+        else:
+            await engine.run()
 
         actions = [a.to_dict() for a in engine.actions_graph.values()]
         logger.log(

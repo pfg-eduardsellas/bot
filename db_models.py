@@ -26,6 +26,7 @@ class Scan(Base):
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
     form_data = Column(JSON, nullable=True)
+    objective = Column(Text, nullable=True)
     in_domain = Column(Boolean, default=False, nullable=False)
     max_pages = Column(Integer, default=15, nullable=False)
     max_depth = Column(Integer, default=3, nullable=False)

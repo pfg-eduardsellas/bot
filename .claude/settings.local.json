@@ -6,7 +6,10 @@
       "Bash(py -c ':*)",
       "Bash(xargs grep *)",
       "Bash(xargs head *)",
-      "Bash(xargs ls *)"
+      "Bash(xargs ls *)",
+      "Bash(cd /d d:\\\\pfg\\\\bot)",
+      "Bash(pip install *)",
+      "PowerShell(& \"C:\\\\Users\\\\eduar\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe\" -m pip install google-genai 2>&1)"
     ]
   }
 }

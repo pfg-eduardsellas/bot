@@ -7,11 +7,22 @@ from collections import deque
 from typing import List, Set, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse
 from playwright.async_api import async_playwright
+from google import genai
+from google.genai import types
+from pydantic import BaseModel
 
 from botpy.models.action import Action, ActionType, ActionRetryError
 from botpy.scrapers.detector import Detector
 from botpy.actions.url_action import URLAction
 from botpy.core.accessibility import setup_axe, run_full_scan, run_partial_scan
+
+
+class AgentDecision(BaseModel):
+    reasoning: str
+    element_id: int
+    action_type: str  # "click" or "type"
+    text_to_type: str | None
+    goal_achieved: bool
 
 
 class Engine:
@@ -442,6 +453,249 @@ class Engine:
                 except Exception as e:
                     self.log(f"Error on action {current_action.id}: {e}")
                     current_url = page.url
+
+            await browser.close()
+            self.unify_urls()
+            self.save_graph()
+
+    async def _get_ia_elements(
+        self, page: Any
+    ) -> Tuple[List[Dict[str, Any]], Dict[int, Action]]:
+        """Detect interactive elements and return a simplified list for the AI prompt
+        alongside a mapping from temp sequential id to Action object."""
+        detected = await self.detector.detect(page, self.current_id_counter)
+        elements: List[Dict[str, Any]] = []
+        action_map: Dict[int, Action] = {}
+
+        for temp_id, action in enumerate(detected):
+            info: Dict[str, Any] = {"id": temp_id}
+            try:
+                if action.type == ActionType.FORM:
+                    info["type"] = "input"
+                    fields = await page.evaluate(
+                        """
+                        (sel) => {
+                            const el = document.querySelector(sel);
+                            if (!el) return [];
+                            const SEL = 'input:not([type="hidden"]):not([type="submit"])'
+                                      + ':not([type="button"]):not([type="image"])'
+                                      + ':not([type="reset"]), textarea, select';
+                            return Array.from(el.querySelectorAll(SEL))
+                                .filter(i => i.checkVisibility({ visibilityProperty: true }))
+                                .map(i => ({
+                                    type: i.getAttribute('type') || i.tagName.toLowerCase(),
+                                    name: i.getAttribute('name') || i.getAttribute('id') || '',
+                                    placeholder: i.getAttribute('placeholder') || '',
+                                    label: (document.querySelector('label[for="' + i.id + '"]')
+                                            || {}).textContent || ''
+                                })).slice(0, 6);
+                        }
+                        """,
+                        action.selector,
+                    )
+                    field_desc = ", ".join(
+                        f"{f['type']}:{(f['label'] or f['placeholder'] or f['name'] or '?').strip()[:20]}"
+                        for f in fields
+                    )
+                    info["text"] = f"Form({field_desc})" if field_desc else "Form"
+                    info["context"] = f"selector:{action.selector[:60]}"
+
+                elif action.type == ActionType.BUTTON:
+                    info["type"] = "button"
+                    locator = action.get_locator(page)
+                    text = await locator.inner_text()
+                    aria = await locator.get_attribute("aria-label") or ""
+                    info["text"] = (text.strip() or aria.strip() or "button")[:60]
+                    info["context"] = action.selector[:60]
+
+                elif action.type == ActionType.LINK:
+                    info["type"] = "link"
+                    locator = page.locator(action.selector).first
+                    text = await locator.inner_text()
+                    href = await locator.get_attribute("href") or ""
+                    info["text"] = text.strip()[:60] or href[:60]
+                    info["context"] = f"href:{href[:60]}"
+
+                else:
+                    info["type"] = "other"
+                    info["text"] = action.selector[:60]
+                    info["context"] = ""
+
+            except Exception:
+                info["type"] = "unknown"
+                info["text"] = action.selector[:60]
+                info["context"] = ""
+
+            elements.append(info)
+            action_map[temp_id] = action
+
+        return elements, action_map
+
+    async def _execute_ia_action(
+        self,
+        page: Any,
+        decision: "AgentDecision",
+        action_map: Dict[int, Action],
+    ) -> bool:
+        """Execute the action chosen by the AI. Returns True on success."""
+        action = action_map.get(decision.element_id)
+        if action is None:
+            self.log(f"[IA] Invalid element_id {decision.element_id}.")
+            return False
+
+        action.log_fn = self.log
+        try:
+            await action.execute(page)
+            return True
+        except ActionRetryError:
+            self.log(f"[IA] Element {decision.element_id} not ready, skipping.")
+            return False
+        except Exception as e:
+            self.log(f"[IA] Execution error on element {decision.element_id}: {e}")
+            return False
+
+    async def run_IA(self, target_goal: str, max_steps: int = 15):
+        """AI-driven scan: Gemini picks one action per step toward target_goal."""
+        self.ia_history: List[str] = []
+
+        async with async_playwright() as p:
+            browser, page = await self._setup_browser(p)
+            self._load_robots()
+            axe_ready = await self._init_accessibility(page)
+
+            # Seed the graph with the start URL node
+            self.current_id_counter += 1
+            start_action = URLAction(
+                id=self.current_id_counter, url=self.start_url, depth=0
+            )
+            self.processed_urls.add(self.start_url)
+            self._register_action(start_action)
+            current_url_action: Action = start_action
+
+            await start_action.execute(page)
+            await self._wait_for_page(page)
+
+            if not await self._check_ownership(page):
+                self.log("[IA] Ownership verification failed. Aborting run_IA.")
+                await browser.close()
+                return
+
+            client = genai.Client()
+
+            for step in range(max_steps):
+                self.log(f"[IA] Step {step + 1}/{max_steps} — {page.url}")
+
+                elements, action_map = await self._get_ia_elements(page)
+                if not elements:
+                    self.log("[IA] No interactive elements found. Stopping.")
+                    break
+
+                history_text = (
+                    "\n".join(self.ia_history) if self.ia_history else "None"
+                )
+                prompt = (
+                    f"OBJECTIVE: {target_goal}\n\n"
+                    f"CURRENT URL: {page.url}\n\n"
+                    f"AVAILABLE ELEMENTS:\n"
+                    f"{json.dumps(elements, ensure_ascii=False, indent=2)}\n\n"
+                    f"PREVIOUS STEPS:\n{history_text}"
+                )
+
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=AgentDecision,
+                    system_instruction=(
+                        "Eres un agente de QA automatizado táctico. Tu fin es interactuar "
+                        "con la web para cumplir el objetivo del usuario. Analiza los "
+                        "elementos disponibles, evita repetir acciones del historial y "
+                        "razona tu respuesta."
+                    ),
+                )
+
+                try:
+                    response = await client.aio.models.generate_content(
+                        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                        contents=prompt,
+                        config=config,
+                    )
+                    decision = AgentDecision.model_validate_json(response.text)
+                except Exception as e:
+                    self.log(f"[IA] Gemini API error at step {step + 1}: {e}")
+                    break
+
+                self.log(
+                    f"[IA] → {decision.action_type} on element {decision.element_id} | "
+                    f"{decision.reasoning[:120]}"
+                )
+
+                if decision.goal_achieved:
+                    self.log(
+                        f"[IA] Goal achieved after {step + 1} step(s): {target_goal}"
+                    )
+                    break
+
+                pre_url = page.url
+                await page.evaluate("console.clear()")
+                self.captured_errors = []
+
+                success = await self._execute_ia_action(page, decision, action_map)
+                if not success:
+                    continue
+
+                await self._wait_for_page(page)
+                post_url = page.url
+
+                # Register executed action in the graph
+                chosen = action_map.get(decision.element_id)
+                if chosen is not None:
+                    self._register_action(chosen)
+                    current_url_action.add_successor(chosen.id)
+                    chosen.add_predecessor(current_url_action.id)
+                    chosen.errors = self.captured_errors.copy()
+
+                    # If navigation occurred, create a URL node for the new page
+                    if post_url != pre_url:
+                        self.current_id_counter += 1
+                        nav_action = URLAction(
+                            id=self.current_id_counter,
+                            url=post_url,
+                            depth=current_url_action.depth + 1,  # type: ignore[attr-defined]
+                        )
+                        self._register_action(nav_action)
+                        chosen.add_successor(nav_action.id)
+                        nav_action.add_predecessor(chosen.id)
+                        current_url_action = nav_action
+                        self.processed_urls.add(post_url)
+
+                # Accessibility scan after each interaction
+                if axe_ready:
+                    violations = await run_full_scan(page)
+                    if chosen is not None:
+                        chosen.accessibility_violations = violations
+                    if violations:
+                        self.log(
+                            f"[IA] Accessibility: {len(violations)} violation(s) on {page.url}"
+                        )
+
+                elem_info = next(
+                    (e for e in elements if e["id"] == decision.element_id), {}
+                )
+                history_line = (
+                    f"Step {step + 1}: {decision.action_type} on "
+                    f"[{elem_info.get('type', '?')}] "
+                    f"'{elem_info.get('text', '?')[:40]}'"
+                    + (
+                        f" typed:'{decision.text_to_type}'"
+                        if decision.text_to_type
+                        else ""
+                    )
+                    + f" → {post_url}"
+                )
+                self.ia_history.append(history_line)
+            else:
+                self.log(
+                    f"[IA] max_steps={max_steps} reached without achieving goal."
+                )
 
             await browser.close()
             self.unify_urls()
