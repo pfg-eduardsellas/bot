@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from botpy.core.engine import Engine
+from botpy.core.scan_engine import ScanEngine
+from botpy.core.ia_engine import IAScanEngine
 from botpy.core.test_runner import execute_test_path
 from database import SessionLocal, engine, Base
 import db_models
@@ -83,7 +84,7 @@ async def run_scan(scan_id: int):
         if isinstance(raw_form_data, str):
             raw_form_data = json.loads(raw_form_data)
 
-        engine = Engine(
+        config = dict(
             start_url=scan.target_url,
             max_pages=scan.max_pages,
             max_depth=scan.max_depth,
@@ -98,9 +99,10 @@ async def run_scan(scan_id: int):
         )
         if scan.objective:
             logger.log(f"[Worker] IA mode — objective: {scan.objective}")
-            await engine.run_IA(target_goal=scan.objective)
+            engine = IAScanEngine(**config, objective=scan.objective)
         else:
-            await engine.run()
+            engine = ScanEngine(**config)
+        await engine.run()
 
         actions = [a.to_dict() for a in engine.actions_graph.values()]
         logger.log(

@@ -40,9 +40,10 @@ def _sibling_key(dom_path: str) -> str:
 
 
 class Detector:
-    def __init__(self, form_data: dict = None):
+    def __init__(self, form_data: dict = None, simplified: bool = True):
         self.img_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp"]
         self.form_data = form_data or {}
+        self.simplified = simplified
 
     def _sanitize_text(self, text: str) -> str:
         if not text:
@@ -53,7 +54,7 @@ class Detector:
     def _build_stable_selector(self, item: dict) -> str:
         """Build a stable Playwright-compatible selector from element attributes.
 
-        Priority: id > data-testid > aria-label > tag:has-text > CSS path (no classes).
+        Priority: id > data-testid > aria-label > CSS path (no classes).
         """
         if item.get("id"):
             return f"#{item['id']}"
@@ -63,9 +64,6 @@ class Detector:
         aria = item.get("aria_label", "").replace('"', "").strip()
         if aria:
             return f'[aria-label="{aria}"]'
-        text = item.get("text", "").replace('"', "").strip()
-        if text:
-            return f"{item['tag']}:has-text(\"{text}\")"
         return item["css_path"]
 
     def _entries_to_button_actions(
@@ -74,13 +72,16 @@ class Detector:
         id_offset: int,
     ) -> List[ButtonAction]:
         actions: List[ButtonAction] = []
+        selector_counts: dict = {}
         for selector in entries:
+            index = selector_counts.get(selector, 0)
+            selector_counts[selector] = index + 1
             action_id = id_offset + len(actions) + 1
             actions.append(
                 ButtonAction(
                     id=action_id,
                     selector=selector,
-                    index=0,
+                    index=index,
                     custom_id=f"btn_{action_id}",
                 )
             )
@@ -114,10 +115,11 @@ class Detector:
             if elem_id and elem_id in processed_ids:
                 continue
 
-            key = _sibling_key(item["path"])
-            if key in seen_siblings:
-                continue
-            seen_siblings.add(key)
+            if self.simplified:
+                key = _sibling_key(item["path"])
+                if key in seen_siblings:
+                    continue
+                seen_siblings.add(key)
 
             if elem_id:
                 processed_ids.add(elem_id)

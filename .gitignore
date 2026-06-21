@@ -1,9 +1,0 @@
-
-.env
-.env.*
-__pycache__/
-.vscode/
-.idea/
-.claude/
-.gitignore
-result.json
