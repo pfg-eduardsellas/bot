@@ -1,6 +1,7 @@
 from typing import Any
 from botpy.models.action import Action, ActionType
 
+
 class URLAction(Action):
     def __init__(self, id: int, url: str, depth: int = 0):
         super().__init__(id, ActionType.URL, value=url)
@@ -12,5 +13,6 @@ class URLAction(Action):
         return data
 
     async def execute(self, page: Any):
-        print(f"Executing URLAction: Navigating to {self.value}")
+        self.log_fn(f"Executing URLAction: Navigating to {self.value}")
+
         await page.goto(self.value)
