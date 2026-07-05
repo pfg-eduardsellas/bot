@@ -286,7 +286,5 @@ class ScanEngine(BaseEngine):
                     current_url = page.url
 
             await browser.close()
-            # self.unify_urls()
-            self.save_graph()
 
     # endregion

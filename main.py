@@ -118,18 +118,7 @@ async def run_scan(scan_id: int):
 
         action_records: dict[int, db_models.ActionRecord] = {}
         for a in actions:
-            record = db_models.ActionRecord(
-                scan_id=scan_id,
-                action_id=a["id"],
-                custom_id=a.get("custom_id", ""),
-                type=a["type"],
-                selector=a.get("selector", ""),
-                value=a.get("value", ""),
-                depth=a.get("depth"),
-                predecessors=json.dumps(a.get("predecessors", [])),
-                successors=json.dumps(a.get("successors", [])),
-                errors=json.dumps(a.get("errors", [])),
-            )
+            record = db_models.ActionRecord.from_action(a, scan_id)
             db.add(record)
             action_records[a["id"]] = record
 
@@ -140,15 +129,8 @@ async def run_scan(scan_id: int):
             record = action_records[a["id"]]
             for v in a.get("accessibility_violations", []):
                 db.add(
-                    db_models.AccessibilityViolation(
-                        scan_id=scan_id,
-                        action_record_id=record.id,
-                        action_id=a["id"],
-                        rule_id=v.get("rule_id", ""),
-                        impact=v.get("impact"),
-                        description=v.get("description"),
-                        help_url=v.get("help_url"),
-                        nodes=json.dumps(v.get("nodes", [])),
+                    db_models.AccessibilityViolation.from_violation(
+                        v, scan_id, record.id, a["id"]
                     )
                 )
                 total_violations += 1

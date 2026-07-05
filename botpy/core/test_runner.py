@@ -4,11 +4,6 @@ from typing import Any, Dict, List, Optional
 
 from playwright.async_api import async_playwright
 
-from botpy.actions.button_action import ButtonAction
-from botpy.actions.form_action import FormAction
-from botpy.actions.link_action import LinkAction
-from botpy.actions.url_action import URLAction
-
 
 ASSERTION_TYPES = {
     "url_equals",
@@ -20,32 +15,6 @@ ASSERTION_TYPES = {
     "value_equals",
     "count_equals",
 }
-
-
-def reconstruct_action(record: Any, form_data: dict):
-    """Rebuild an Action object from a stored ActionRecord."""
-    if record.type == "URL":
-        return URLAction(id=record.action_id, url=record.value)
-    elif record.type == "BUTTON":
-        return ButtonAction(
-            id=record.action_id, selector=record.selector, custom_id=record.custom_id
-        )
-    elif record.type == "LINK":
-        return LinkAction(
-            id=record.action_id,
-            selector=record.selector,
-            href=record.value,
-            custom_id=record.custom_id,
-        )
-    elif record.type == "FORM":
-        return FormAction(
-            id=record.action_id,
-            selector=record.selector,
-            form_data=form_data,
-            custom_id=record.custom_id,
-        )
-    else:
-        raise ValueError(f"Unknown action type: {record.type}")
 
 
 async def _evaluate_assertion(page, assertion: dict) -> dict:
@@ -137,7 +106,7 @@ async def execute_test_path(
 
                 action_error = None
                 try:
-                    action = reconstruct_action(record, form_data)
+                    action = record.to_action(form_data)
 
                     await action.execute(page)
                     await page.wait_for_load_state("networkidle")

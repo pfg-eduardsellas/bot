@@ -177,11 +177,9 @@ class IAScanEngine(BaseEngine):
             try:
                 await self._run_loop(page)
             finally:
-                # Always persist whatever graph we managed to build, even if the
-                # loop aborted on an unexpected error.
+                # Always close the browser, even if the loop aborted on an
+                # unexpected error, so the caller can persist the graph we built.
                 await browser.close()
-                self.unify_urls()
-                self.save_graph()
 
     async def _run_loop(self, page: Any):
         self._load_robots()

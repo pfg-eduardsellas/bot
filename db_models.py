@@ -59,9 +59,9 @@ class ActionRecord(Base):
     selector = Column(String, default="")
     value = Column(Text, default="")
     depth = Column(Integer, nullable=True)
-    predecessors = Column(Text, default="[]")
-    successors = Column(Text, default="[]")
-    errors = Column(Text, default="[]")
+    predecessors = Column(JSON, default=list)
+    successors = Column(JSON, default=list)
+    errors = Column(JSON, default=list)
 
     scan = relationship("Scan", back_populates="actions")
     accessibility_violations = relationship(
@@ -69,6 +69,52 @@ class ActionRecord(Base):
         back_populates="action_record",
         cascade="all, delete-orphan",
     )
+
+    @classmethod
+    def from_action(cls, data: dict, scan_id: int) -> "ActionRecord":
+        """Build a row from a serialized Action (the output of Action.to_dict())."""
+        return cls(
+            scan_id=scan_id,
+            action_id=data["id"],
+            custom_id=data.get("custom_id", ""),
+            type=data["type"],
+            selector=data.get("selector", ""),
+            value=data.get("value", ""),
+            depth=data.get("depth"),
+            predecessors=data.get("predecessors", []),
+            successors=data.get("successors", []),
+            errors=data.get("errors", []),
+        )
+
+    def to_action(self, form_data: dict = None):
+        """Rebuild the runtime Action object this record was persisted from."""
+        from botpy.actions.url_action import URLAction
+        from botpy.actions.button_action import ButtonAction
+        from botpy.actions.link_action import LinkAction
+        from botpy.actions.form_action import FormAction
+
+        if self.type == "URL":
+            return URLAction(id=self.action_id, url=self.value)
+        elif self.type == "BUTTON":
+            return ButtonAction(
+                id=self.action_id, selector=self.selector, custom_id=self.custom_id
+            )
+        elif self.type == "LINK":
+            return LinkAction(
+                id=self.action_id,
+                selector=self.selector,
+                href=self.value,
+                custom_id=self.custom_id,
+            )
+        elif self.type == "FORM":
+            return FormAction(
+                id=self.action_id,
+                selector=self.selector,
+                form_data=form_data,
+                custom_id=self.custom_id,
+            )
+        else:
+            raise ValueError(f"Unknown action type: {self.type}")
 
 
 class ScanLog(Base):
@@ -127,12 +173,28 @@ class AccessibilityViolation(Base):
     impact = Column(String, nullable=True)
     description = Column(Text, nullable=True)
     help_url = Column(String, nullable=True)
-    nodes = Column(Text, default="[]")
+    nodes = Column(JSON, default=list)
 
     scan = relationship("Scan", back_populates="accessibility_violations")
     action_record = relationship(
         "ActionRecord", back_populates="accessibility_violations"
     )
+
+    @classmethod
+    def from_violation(
+        cls, data: dict, scan_id: int, action_record_id: int, action_id: int
+    ) -> "AccessibilityViolation":
+        """Build a row from an axe-core violation dict."""
+        return cls(
+            scan_id=scan_id,
+            action_record_id=action_record_id,
+            action_id=action_id,
+            rule_id=data.get("rule_id", ""),
+            impact=data.get("impact"),
+            description=data.get("description"),
+            help_url=data.get("help_url"),
+            nodes=data.get("nodes", []),
+        )
 
 
 class User(Base):

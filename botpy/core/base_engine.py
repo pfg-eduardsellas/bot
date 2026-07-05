@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import re
 import urllib.robotparser
@@ -171,65 +170,5 @@ class BaseEngine:
                 "[Accessibility] axe-core unavailable — accessibility scans skipped."
             )
         return axe_ready
-
-    # endregion
-
-    # region post processing
-
-    def unify_urls(self):
-        """Merge duplicate URLAction nodes that share the same URL."""
-        url_groups: Dict[str, List[int]] = {}
-        for action_id, action in self.actions_graph.items():
-            if action.type == ActionType.URL:
-                url_groups.setdefault(action.value, []).append(action_id)
-
-        for ids in url_groups.values():
-            if len(ids) <= 1:
-                continue
-
-            canonical_id = ids[0]
-            canonical = self.actions_graph[canonical_id]
-
-            for other_id in ids[1:]:
-                other = self.actions_graph[other_id]
-
-                for pred_id in other.predecessors:
-                    if pred_id != canonical_id:
-                        canonical.add_predecessor(pred_id)
-                for succ_id in other.successors:
-                    if succ_id != canonical_id:
-                        canonical.add_successor(succ_id)
-
-                for action in self.actions_graph.values():
-                    if other_id in action.predecessors:
-                        action.predecessors = list(
-                            dict.fromkeys(
-                                canonical_id if x == other_id else x
-                                for x in action.predecessors
-                            )
-                        )
-                    if other_id in action.successors:
-                        action.successors = list(
-                            dict.fromkeys(
-                                canonical_id if x == other_id else x
-                                for x in action.successors
-                            )
-                        )
-
-                del self.actions_graph[other_id]
-
-        for action in self.actions_graph.values():
-            action.predecessors = [x for x in action.predecessors if x != action.id]
-            action.successors = [x for x in action.successors if x != action.id]
-
-    def save_graph(self):
-        output = {"actions": [a.to_dict() for a in self.actions_graph.values()]}
-        backend_dir = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-        out_path = os.path.join(backend_dir, "result.json")
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=4)
-        self.log(f"Engine finished. Graph saved to {out_path}")
 
     # endregion
