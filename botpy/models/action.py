@@ -29,6 +29,7 @@ class Action(ABC):
         self.selector = selector
         self.value = value
         self.custom_id = custom_id
+        self.name: str = ""
         self.predecessors: List[int] = []
         self.successors: List[int] = []
         self.errors: List[str] = []
@@ -59,6 +60,7 @@ class Action(ABC):
             "type": self.type.value,
             "selector": self.selector,
             "value": self.value,
+            "name": self.name,
             "predecessors": self.predecessors,
             "successors": self.successors,
             "errors": self.errors,

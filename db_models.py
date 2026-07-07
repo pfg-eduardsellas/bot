@@ -58,6 +58,7 @@ class ActionRecord(Base):
     type = Column(String, nullable=False)  # URL | BUTTON | FORM | LINK
     selector = Column(String, default="")
     value = Column(Text, default="")
+    name = Column(String, default="", nullable=True)
     depth = Column(Integer, nullable=True)
     predecessors = Column(JSON, default=list)
     successors = Column(JSON, default=list)
@@ -80,6 +81,7 @@ class ActionRecord(Base):
             type=data["type"],
             selector=data.get("selector", ""),
             value=data.get("value", ""),
+            name=data.get("name", ""),
             depth=data.get("depth"),
             predecessors=data.get("predecessors", []),
             successors=data.get("successors", []),
@@ -93,28 +95,33 @@ class ActionRecord(Base):
         from botpy.actions.link_action import LinkAction
         from botpy.actions.form_action import FormAction
 
+        stored_name = self.name or ""
         if self.type == "URL":
-            return URLAction(id=self.action_id, url=self.value)
+            action = URLAction(id=self.action_id, url=self.value)
         elif self.type == "BUTTON":
-            return ButtonAction(
-                id=self.action_id, selector=self.selector, custom_id=self.custom_id
+            action = ButtonAction(
+                id=self.action_id, selector=self.selector, custom_id=self.custom_id, name=stored_name
             )
         elif self.type == "LINK":
-            return LinkAction(
+            action = LinkAction(
                 id=self.action_id,
                 selector=self.selector,
                 href=self.value,
                 custom_id=self.custom_id,
             )
         elif self.type == "FORM":
-            return FormAction(
+            action = FormAction(
                 id=self.action_id,
                 selector=self.selector,
                 form_data=form_data,
                 custom_id=self.custom_id,
+                name=stored_name,
             )
         else:
             raise ValueError(f"Unknown action type: {self.type}")
+        if stored_name:
+            action.name = stored_name
+        return action
 
 
 class ScanLog(Base):

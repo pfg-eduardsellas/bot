@@ -68,12 +68,14 @@ class Detector:
 
     def _entries_to_button_actions(
         self,
-        entries: List[str],
+        entries: List[dict],
         id_offset: int,
     ) -> List[ButtonAction]:
         actions: List[ButtonAction] = []
         selector_counts: dict = {}
-        for selector in entries:
+        for entry in entries:
+            selector = entry["selector"]
+            name = entry["name"]
             index = selector_counts.get(selector, 0)
             selector_counts[selector] = index + 1
             action_id = id_offset + len(actions) + 1
@@ -83,6 +85,7 @@ class Detector:
                     selector=selector,
                     index=index,
                     custom_id=f"btn_{action_id}",
+                    name=name,
                 )
             )
         return actions
@@ -104,11 +107,11 @@ class Detector:
         self,
         raw: List[dict],
         processed_ids: set,
-    ) -> List[str]:
-        """Deduplicate by sibling key (using class-aware path) and return stable selectors."""
+    ) -> List[dict]:
+        """Deduplicate by sibling key (using class-aware path) and return stable selectors with names."""
         raw = self._remove_descendants(raw)
         seen_siblings: set = set()
-        selectors: List[str] = []
+        entries: List[dict] = []
 
         for item in raw:
             elem_id = item.get("id", "")
@@ -124,9 +127,11 @@ class Detector:
             if elem_id:
                 processed_ids.add(elem_id)
 
-            selectors.append(self._build_stable_selector(item))
+            selector = self._build_stable_selector(item)
+            text = (item.get("text") or "").strip()
+            entries.append({"selector": selector, "name": text or selector})
 
-        return selectors
+        return entries
 
     # region detectors
 
@@ -170,21 +175,43 @@ class Detector:
     async def _detect_links(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[LinkAction]:
-        links = await page.locator("a[href]:visible").all()
+        raw = await page.evaluate(
+            f"""
+            () => {{
+                {_CSS_PATH_FN}
+                return Array.from(document.querySelectorAll('a[href]'))
+                    .filter(el => el.checkVisibility({{ visibilityProperty: true }}))
+                    .map(el => ({{
+                        id: el.id || '',
+                        href: el.getAttribute('href') || '',
+                        aria_label: el.getAttribute('aria-label') || '',
+                        data_testid: el.getAttribute('data-testid') || '',
+                        css_path: getCssPath(el),
+                    }}));
+            }}
+            """
+        )
         actions: List[LinkAction] = []
-        for link in links:
-            href = await link.get_attribute("href")
+        seen_hrefs: set = set()
+        for item in raw:
+            href = item.get("href", "")
             if (
                 not href
                 or href.startswith("#")
                 or any(ext in href for ext in self.img_extensions)
             ):
                 continue
-            raw_text = await link.text_content()
-            safe_text = self._sanitize_text(raw_text[:20])
-            selector = (
-                f"a:has-text('{safe_text}')" if safe_text else f"a[href='{href}']"
-            )
+            if href in seen_hrefs:
+                continue
+            seen_hrefs.add(href)
+
+            elem_id = item.get("id", "")
+            if elem_id and elem_id in processed_ids:
+                continue
+            if elem_id:
+                processed_ids.add(elem_id)
+
+            selector = self._build_stable_selector(item)
             action_id = id_offset + len(actions) + 1
             actions.append(
                 LinkAction(
@@ -210,12 +237,17 @@ class Detector:
                 const visibleInputs = Array.from(document.querySelectorAll(INPUT_SEL))
                     .filter(el => el.checkVisibility({{ visibilityProperty: true }}));
                 const groups = new Map();
+                function addInput(groups, key, groupData, input) {{
+                    if (!groups.has(key)) groups.set(key, {{ ...groupData, inputs: [] }});
+                    const label = input.id || input.getAttribute('name') || input.type || input.tagName.toLowerCase();
+                    groups.get(key).inputs.push(label);
+                }}
                 for (const input of visibleInputs) {{
                     const formEl = input.closest('form, [role="form"], [role="search"]');
                     if (formEl) {{
                         const key = formEl.id || getDomPath(formEl);
                         const sel = formEl.id ? '#' + CSS.escape(formEl.id) : getCssPath(formEl);
-                        if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: formEl.id || '' }});
+                        addInput(groups, key, {{ selector: sel, elemId: formEl.id || '' }}, input);
                     }} else {{
                         let container = input.parentElement;
                         while (container && container !== document.body) {{
@@ -227,7 +259,7 @@ class Detector:
                         if (!container || container === document.body) continue;
                         const key = container.id || getDomPath(container);
                         const sel = container.id ? '#' + CSS.escape(container.id) : getCssPath(container);
-                        if (!groups.has(key)) groups.set(key, {{ selector: sel, elemId: container.id || '' }});
+                        addInput(groups, key, {{ selector: sel, elemId: container.id || '' }}, input);
                     }}
                 }}
                 return Array.from(groups.values());
@@ -244,12 +276,15 @@ class Detector:
             if elem_id:
                 processed_ids.add(elem_id)
             action_id = id_offset + len(actions) + 1
+            inputs = group.get("inputs", [])
+            form_name = "[" + ", ".join(inputs) + "]" if inputs else selector
             actions.append(
                 FormAction(
                     id=action_id,
                     selector=selector,
                     form_data=self.form_data,
                     custom_id=f"frm_{action_id}",
+                    name=form_name,
                 )
             )
 

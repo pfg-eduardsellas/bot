@@ -7,6 +7,7 @@ class LinkAction(Action):
         super().__init__(
             id, ActionType.LINK, selector=selector, value=href, custom_id=custom_id
         )
+        self.name = href
 
     async def execute(self, page: Any):
         self.log_fn(f"Executing LinkAction: Navigating to {self.value} via click")

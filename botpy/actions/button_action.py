@@ -8,11 +8,12 @@ _HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 
 
 class ButtonAction(Action):
-    def __init__(self, id: int, selector: str, index: int = 0, custom_id: str = ""):
+    def __init__(self, id: int, selector: str, index: int = 0, custom_id: str = "", name: str = ""):
         unique_selector = f"{selector}::nth={index}" if index > 0 else selector
         super().__init__(id, ActionType.BUTTON, selector=unique_selector, custom_id=custom_id)
         self._base_selector = selector
         self.index = index
+        self.name = name or selector
 
     def get_locator(self, page: Any):
         return page.locator(self._base_selector).nth(self.index)

@@ -6,6 +6,7 @@ class URLAction(Action):
     def __init__(self, id: int, url: str, depth: int = 0):
         super().__init__(id, ActionType.URL, value=url)
         self.depth = depth
+        self.name = url
 
     def to_dict(self):
         data = super().to_dict()
