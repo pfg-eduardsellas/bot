@@ -22,11 +22,12 @@ _DOM_PATH_FN = """
 """
 
 # CSS path without classes — used as the stable fallback selector.
+# TEMP: id-shortcut disabled so ids are never used as selectors. Revert by
+# restoring the `if (node.id) return ...` line below.
 _CSS_PATH_FN = """
     function getCssPath(node) {
         if (!node || node.tagName === 'BODY') return 'body';
         let part = node.tagName.toLowerCase();
-        if (node.id) return part + '#' + CSS.escape(node.id);
         const siblings = Array.from(node.parentElement?.children || [])
             .filter(c => c.tagName === node.tagName);
         if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
@@ -56,8 +57,8 @@ class Detector:
 
         Priority: id > data-testid > aria-label > CSS path (no classes).
         """
-        if item.get("id"):
-            return f"#{item['id']}"
+        # TEMP: id branch disabled — never use an element's id as selector.
+        # Revert by restoring: `if item.get("id"): return f"#{item['id']}"`
         testid = item.get("data_testid", "")
         if testid:
             return f'[data-testid="{testid}"]'
@@ -246,7 +247,7 @@ class Detector:
                     const formEl = input.closest('form, [role="form"], [role="search"]');
                     if (formEl) {{
                         const key = formEl.id || getDomPath(formEl);
-                        const sel = formEl.id ? '#' + CSS.escape(formEl.id) : getCssPath(formEl);
+                        const sel = getCssPath(formEl);
                         addInput(groups, key, {{ selector: sel, elemId: formEl.id || '' }}, input);
                     }} else {{
                         let container = input.parentElement;
@@ -258,7 +259,7 @@ class Detector:
                         }}
                         if (!container || container === document.body) continue;
                         const key = container.id || getDomPath(container);
-                        const sel = container.id ? '#' + CSS.escape(container.id) : getCssPath(container);
+                        const sel = getCssPath(container);
                         addInput(groups, key, {{ selector: sel, elemId: container.id || '' }}, input);
                     }}
                 }}

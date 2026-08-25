@@ -135,6 +135,23 @@ class BaseEngine:
         if msg.type == "error":
             self.captured_errors.append(msg.text)
 
+    def _on_request_failed(self, request):
+        """Capture network-level failures (DNS, refused, timeout, blocked)."""
+        failure = request.failure
+        # ERR_ABORTED is usually a request cancelled by navigation, not a real
+        # error — skip it to avoid false positives.
+        if failure and "ERR_ABORTED" not in failure:
+            self.captured_errors.append(
+                f"Network request failed ({failure}): {request.url}"
+            )
+
+    def _on_response(self, response):
+        """Capture HTTP error responses (4xx/5xx) that never reach the console."""
+        if response.status >= 400:
+            self.captured_errors.append(
+                f"HTTP {response.status} on {response.request.method} {response.url}"
+            )
+
     async def _wait_for_page(self, page: Any):
         """Wait for DOM + network to settle after an action."""
         await page.wait_for_load_state("domcontentloaded")
@@ -156,6 +173,8 @@ class BaseEngine:
             **({"user_agent": user_agent} if user_agent else {})
         )
         page.on("console", self._on_console_message)
+        page.on("requestfailed", self._on_request_failed)
+        page.on("response", self._on_response)
         return browser, page
 
     async def _init_accessibility(self, page: Any) -> bool:

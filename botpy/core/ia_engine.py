@@ -53,8 +53,11 @@ class IAScanEngine(BaseEngine):
         action_map: Dict[int, Action] = {}
 
         for temp_id, action in enumerate(detected):
-            info: Dict[str, Any] = {"id": temp_id}
-            try:
+            info: Dict[str, Any] = {
+                "id": temp_id,
+                "visited": action.selector in self.known_selectors,
+            }
+            try: 
                 if action.type == ActionType.FORM:
                     info["type"] = "input"
                     fields = await page.evaluate(
@@ -255,6 +258,8 @@ class IAScanEngine(BaseEngine):
                     "When NEW ELEMENTS are listed separately, they appeared as a result "
                     "of your last action — prioritize interacting with them unless they "
                     "are not relevant to the objective. "
+                    "Elements marked 'visited: true' have already been interacted with — "
+                    "do NOT repeat them unless it is strictly necessary to make progress. "
                     "Avoid repeating actions already listed in PREVIOUS STEPS. "
                     "Reason through your response before choosing."
                 ),
