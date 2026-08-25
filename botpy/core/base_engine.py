@@ -14,6 +14,8 @@ from botpy.core.accessibility import setup_axe
 
 
 class BaseEngine:
+    """Setup and helpers shared by both crawling engines."""
+
     def __init__(
         self,
         start_url: str,
@@ -82,6 +84,7 @@ class BaseEngine:
     # region robots and domain checks
 
     def _load_robots(self):
+        """Read the site's robots.txt and its crawl delay."""
         parsed = urlparse(self.start_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
         rp = urllib.robotparser.RobotFileParser()
@@ -101,6 +104,7 @@ class BaseEngine:
         self._robot_parser = rp
 
     def _is_allowed(self, url: str) -> bool:
+        """Check whether robots.txt allows crawling a URL."""
         if self._robot_parser is None:
             return True
         return self._robot_parser.can_fetch(self._bot_name, url)
@@ -132,6 +136,7 @@ class BaseEngine:
     # region helpers
 
     def _on_console_message(self, msg):
+        """Capture console errors raised by the page."""
         if msg.type == "error":
             self.captured_errors.append(msg.text)
 
@@ -166,6 +171,7 @@ class BaseEngine:
     # region browser setup
 
     async def _setup_browser(self, playwright):
+        """Launch Chromium and open a page wired to the error listeners."""
         headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
         user_agent = os.getenv("BOT_USER_AGENT")
         browser = await playwright.chromium.launch(headless=headless)
@@ -178,6 +184,7 @@ class BaseEngine:
         return browser, page
 
     async def _init_accessibility(self, page: Any) -> bool:
+        """Inject axe-core when accessibility analysis is enabled for the scan."""
         if not self.accessibility:
             self.log("[Accessibility] Accessibility analysis disabled for this scan.")
             return False

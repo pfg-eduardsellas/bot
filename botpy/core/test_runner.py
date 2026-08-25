@@ -80,7 +80,7 @@ async def execute_test_path(
     scan_id: int,
     assertions: Optional[Dict[str, List[dict]]] = None,
 ) -> Dict[str, Any]:
-
+    """Replay a saved path in a fresh browser and check its assertions."""
     assertions = assertions or {}
     steps = []
     passed = True

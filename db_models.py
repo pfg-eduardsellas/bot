@@ -125,6 +125,8 @@ class ActionRecord(Base):
 
 
 class ScanLog(Base):
+    """One log line emitted while a scan was running."""
+
     __tablename__ = "logs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -136,6 +138,8 @@ class ScanLog(Base):
 
 
 class TestPath(Base):
+    """A saved path through a scan graph, optionally scheduled to run on its own."""
+
     __tablename__ = "test_paths"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -155,6 +159,8 @@ class TestPath(Base):
 
 
 class TestPathRun(Base):
+    """One execution of a test path and its result."""
+
     __tablename__ = "test_path_runs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -169,6 +175,7 @@ class TestPathRun(Base):
 
 
 class AccessibilityViolation(Base):
+    """One accessibility violation reported by axe-core on an action."""
 
     __tablename__ = "accessibility_violations"
 

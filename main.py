@@ -26,10 +26,7 @@ Base.metadata.create_all(bind=engine)
 
 
 def fire_due_schedules(current_hour: datetime):
-    """
-    Called once per hour when the hour changes.
-    Finds all enabled TestPaths whose day+hour match right now and enqueues a run.
-    """
+    """Queue a run for every enabled test path scheduled at the given hour."""
     dow = str(current_hour.isoweekday())  # "1"=mon … "7"=sun
     hour = str(current_hour.hour)
 
@@ -166,6 +163,7 @@ async def run_scan(scan_id: int):
 
 
 async def run_test_path_run(run_id: int):
+    """Execute a queued test path run and store its result."""
     db = SessionLocal()
     try:
         run = (

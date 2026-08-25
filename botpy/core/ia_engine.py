@@ -13,6 +13,8 @@ from botpy.core.accessibility import run_full_scan
 
 
 class AgentDecision(BaseModel):
+    """The decision the model returns on each step."""
+
     reasoning: str
     element_id: int
     action_type: str  # "click" or "type"
@@ -21,6 +23,7 @@ class AgentDecision(BaseModel):
 
 
 class IAScanEngine(BaseEngine):
+    """Scan engine where the model picks one action per step to pursue an objective."""
 
     def __init__(self, *args, objective: str, max_steps: int = 15, **kwargs):
         super().__init__(*args, **kwargs)
@@ -33,15 +36,7 @@ class IAScanEngine(BaseEngine):
     async def _get_ia_elements(
         self, page: Any, pre_selectors: set = None
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[int, Action]]:
-        """
-        Detect all interactive elements with full metadata for the AI prompt.
-
-        Returns (new_elements, existing_elements, action_map).
-        new_elements: appeared after the last action (not in pre_selectors).
-        existing_elements: were already present before the last action.
-        When pre_selectors is empty/None (first step or after navigation), all
-        elements go into existing_elements so the prompt uses a flat list.
-        """
+        """Describe the page's interactive elements, split into newly appeared and pre-existing."""
         self.detector.simplified = False
         try:
             detected = await self.detector.detect(page, self.current_id_counter)
@@ -133,7 +128,7 @@ class IAScanEngine(BaseEngine):
         decision: AgentDecision,
         action_map: Dict[int, Action],
     ) -> bool:
-        """Execute the action chosen by the AI. Returns True on success."""
+        """Execute the action the model chose for this step."""
         action = action_map.get(decision.element_id)
         if action is None:
             self.log(f"[IA] Invalid element_id {decision.element_id}.")
@@ -185,6 +180,7 @@ class IAScanEngine(BaseEngine):
                 await browser.close()
 
     async def _run_loop(self, page: Any):
+        """Drive the model step by step, executing its choices and building the graph."""
         self._load_robots()
         axe_ready = await self._init_accessibility(page)
 

@@ -37,26 +37,27 @@ _CSS_PATH_FN = """
 
 
 def _sibling_key(dom_path: str) -> str:
+    """Strip positional pseudo-classes so sibling elements collapse into one key."""
     return re.compile(r":nth-(?:child|of-type)\(\d+\)").sub("", dom_path)
 
 
 class Detector:
+    """Finds the interactive elements of a page and turns them into actions."""
+
     def __init__(self, form_data: dict = None, simplified: bool = True):
         self.img_extensions = [".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp"]
         self.form_data = form_data or {}
         self.simplified = simplified
 
     def _sanitize_text(self, text: str) -> str:
+        """Collapse whitespace and escape quotes in an element's text."""
         if not text:
             return ""
         cleaned = " ".join(text.split())
         return cleaned.replace("'", "\\'")
 
     def _build_stable_selector(self, item: dict) -> str:
-        """Build a stable Playwright-compatible selector from element attributes.
-
-        Priority: id > data-testid > aria-label > CSS path (no classes).
-        """
+        """Build a stable selector, preferring data-testid, then aria-label, then the CSS path."""
         # TEMP: id branch disabled — never use an element's id as selector.
         # Revert by restoring: `if item.get("id"): return f"#{item['id']}"`
         testid = item.get("data_testid", "")
@@ -72,6 +73,7 @@ class Detector:
         entries: List[dict],
         id_offset: int,
     ) -> List[ButtonAction]:
+        """Turn detected entries into button actions, indexing repeated selectors."""
         actions: List[ButtonAction] = []
         selector_counts: dict = {}
         for entry in entries:
@@ -139,6 +141,7 @@ class Detector:
     async def _detect_clickable(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[ButtonAction]:
+        """Detect buttons and any other clickable element on the page."""
         raw = await page.evaluate(
             f"""
             () => {{
@@ -176,6 +179,7 @@ class Detector:
     async def _detect_links(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[LinkAction]:
+        """Detect navigable links, ignoring anchors and image URLs."""
         raw = await page.evaluate(
             f"""
             () => {{
@@ -227,6 +231,7 @@ class Detector:
     async def _detect_forms(
         self, page: Any, processed_ids: set, id_offset: int
     ) -> List[FormAction]:
+        """Detect forms and the input groups that behave like one."""
         actions: List[FormAction] = []
 
         groups = await page.evaluate(
@@ -292,6 +297,7 @@ class Detector:
         return actions
 
     async def detect(self, page: Any, current_id_counter: int) -> List[Action]:
+        """Detect every form, clickable element and link on the page as actions."""
         new_actions: List[Action] = []
         processed_ids: set = set()
 

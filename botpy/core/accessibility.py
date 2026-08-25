@@ -8,6 +8,7 @@ _axe_script: Optional[str] = None
 
 
 def _load_axe_script() -> Optional[str]:
+    """Download the axe-core bundle once and keep it cached in memory."""
     global _axe_script
     if _axe_script is not None:
         return _axe_script
@@ -42,6 +43,7 @@ async def run_partial_scan(page, selectors: List[str]) -> List[dict]:
 
 
 async def _axe_evaluate(page, include: Optional[List[str]]) -> List[dict]:
+    """Run axe inside the browser and normalize the violations it reports."""
     try:
         violations = await page.evaluate(
             """

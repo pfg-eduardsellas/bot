@@ -7,6 +7,8 @@ NAV_TIMEOUT_MS = 8000
 
 
 class LinkAction(Action):
+    """Action that clicks a link and follows wherever it navigates."""
+
     def __init__(self, id: int, selector: str, href: str, custom_id: str = ""):
         super().__init__(
             id, ActionType.LINK, selector=selector, value=href, custom_id=custom_id
@@ -14,6 +16,7 @@ class LinkAction(Action):
         self.name = href
 
     async def execute(self, page: Any):
+        """Click the link and resolve whether it navigated in place or opened a new tab."""
         self.log_fn(f"Executing LinkAction: Navigating to {self.value} via click")
         pre_url = page.url
 

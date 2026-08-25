@@ -16,6 +16,8 @@ DEFAULT_VALUES = {
 
 
 class FormAction(Action):
+    """Action that fills every input of a form and submits it."""
+
     def __init__(
         self, id: int, selector: str, form_data: dict = None, custom_id: str = "", name: str = ""
     ):
@@ -25,6 +27,7 @@ class FormAction(Action):
         self.name = name or selector
 
     async def execute(self, page: Any):
+        """Fill the form inputs with the user's values or defaults and submit it."""
         self.log_fn(f"Executing FormAction: Filling form {self.selector}")
 
         form_locator = page.locator(self.selector)
