@@ -1,10 +1,11 @@
 import asyncio
 import json
 import os
-import sys
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 from botpy.core.scan_engine import ScanEngine
 from botpy.core.ia_engine import IAScanEngine
@@ -22,10 +23,7 @@ Base.metadata.create_all(bind=engine)
 
 
 def fire_due_schedules(current_hour: datetime):
-    """
-    Called once per hour when the hour changes.
-    Finds all enabled TestPaths whose day+hour match right now and enqueues a run.
-    """
+    """Queue a run for every enabled test path scheduled at the given hour."""
     dow = str(current_hour.isoweekday())  # "1"=mon … "7"=sun
     hour = str(current_hour.hour)
 
@@ -118,18 +116,7 @@ async def run_scan(scan_id: int):
 
         action_records: dict[int, db_models.ActionRecord] = {}
         for a in actions:
-            record = db_models.ActionRecord(
-                scan_id=scan_id,
-                action_id=a["id"],
-                custom_id=a.get("custom_id", ""),
-                type=a["type"],
-                selector=a.get("selector", ""),
-                value=a.get("value", ""),
-                depth=a.get("depth"),
-                predecessors=json.dumps(a.get("predecessors", [])),
-                successors=json.dumps(a.get("successors", [])),
-                errors=json.dumps(a.get("errors", [])),
-            )
+            record = db_models.ActionRecord.from_action(a, scan_id)
             db.add(record)
             action_records[a["id"]] = record
 
@@ -140,15 +127,8 @@ async def run_scan(scan_id: int):
             record = action_records[a["id"]]
             for v in a.get("accessibility_violations", []):
                 db.add(
-                    db_models.AccessibilityViolation(
-                        scan_id=scan_id,
-                        action_record_id=record.id,
-                        action_id=a["id"],
-                        rule_id=v.get("rule_id", ""),
-                        impact=v.get("impact"),
-                        description=v.get("description"),
-                        help_url=v.get("help_url"),
-                        nodes=json.dumps(v.get("nodes", [])),
+                    db_models.AccessibilityViolation.from_violation(
+                        v, scan_id, record.id, a["id"]
                     )
                 )
                 total_violations += 1
@@ -180,6 +160,7 @@ async def run_scan(scan_id: int):
 
 
 async def run_test_path_run(run_id: int):
+    """Execute a queued test path run and store its result."""
     db = SessionLocal()
     try:
         run = (

@@ -2,22 +2,26 @@ import asyncio
 import os
 from typing import Any
 from botpy.models.action import Action, ActionType, ActionRetryError
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 _HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 
 
 class ButtonAction(Action):
-    def __init__(self, id: int, selector: str, index: int = 0, custom_id: str = ""):
+    """Action that clicks a button or any other clickable element."""
+
+    def __init__(self, id: int, selector: str, index: int = 0, custom_id: str = "", name: str = ""):
         unique_selector = f"{selector}::nth={index}" if index > 0 else selector
         super().__init__(id, ActionType.BUTTON, selector=unique_selector, custom_id=custom_id)
         self._base_selector = selector
         self.index = index
+        self.name = name or selector
 
     def get_locator(self, page: Any):
+        """Locate the indexed element that matches this action's base selector."""
         return page.locator(self._base_selector).nth(self.index)
 
     async def execute(self, page: Any):
+        """Click the element, allowing one retry before marking it as failed."""
         self.log_fn(f"Executing ButtonAction: Clicking {self._base_selector}[{self.index}]")
         locator = self.get_locator(page)
 

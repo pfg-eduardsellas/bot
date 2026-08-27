@@ -9,6 +9,7 @@ from botpy.core.accessibility import run_full_scan, run_partial_scan
 
 
 class ScanEngine(BaseEngine):
+    """Crawler that systematically explores every action it detects."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -17,6 +18,7 @@ class ScanEngine(BaseEngine):
     # region queue management
 
     def _get_queue(self, url: str) -> deque:
+        """Get a page's pending-action queue, creating it if needed."""
         if url not in self.page_queues:
             self.page_queues[url] = deque()
         return self.page_queues[url]
@@ -52,10 +54,7 @@ class ScanEngine(BaseEngine):
     async def _backtrack_to_element(
         self, page: Any, action: Action
     ) -> Tuple[bool, Optional[Action]]:
-        """
-        Replay predecessors to restore the state where action's element is visible.
-        Returns (success, first_action_in_path).
-        """
+        """Replay the predecessors of an action until its element is visible again."""
         path = self.get_path_to_action(action.id)
         new_start = path[0] if path else None
         await self.execute_path(page, path)
@@ -82,13 +81,7 @@ class ScanEngine(BaseEngine):
         post_url: str,
         start_action: Action,
     ) -> Tuple[Optional[URLAction], Action, Action, bool]:
-        """
-        Called when a non-URL action caused a page navigation.
-
-        Returns (new_url_action, parent_for_new_actions, updated_start_action, blocked).
-        blocked=True means ownership failed and the caller should skip this iteration.
-        new_url_action is None when the URL was already known, out of limits, or out-of-domain.
-        """
+        """Handle a navigation triggered by a non-URL action, adding the new page to the graph."""
         if not await self._check_ownership(page):
             msg = 'Missing <meta name="testify" content="[token]"> — ownership not verified'
             self.log(f"[Ownership] {msg} on {post_url}")
@@ -140,6 +133,7 @@ class ScanEngine(BaseEngine):
         post_url: str,
         axe_ready: bool,
     ):
+        """Run the accessibility scan that fits what the executed action produced."""
         if not axe_ready:
             return
 
@@ -248,6 +242,7 @@ class ScanEngine(BaseEngine):
     # region main loop
 
     async def run(self):
+        """Crawl the site until the queues run dry or a limit is reached."""
         async with async_playwright() as p:
             browser, page = await self._setup_browser(p)
             self._load_robots()
@@ -286,7 +281,5 @@ class ScanEngine(BaseEngine):
                     current_url = page.url
 
             await browser.close()
-            # self.unify_urls()
-            self.save_graph()
 
     # endregion

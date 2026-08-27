@@ -16,16 +16,18 @@ DEFAULT_VALUES = {
 
 
 class FormAction(Action):
+    """Action that fills every input of a form and submits it."""
+
     def __init__(
-        self, id: int, selector: str, form_data: dict = None, custom_id: str = ""
+        self, id: int, selector: str, form_data: dict = None, custom_id: str = "", name: str = ""
     ):
         super().__init__(id, ActionType.FORM, selector=selector, custom_id=custom_id)
         self.form_data = form_data or {}
-        # We can store the form data in the 'value' attribute as a string representation
-        # or just keep it separate. For consistency with to_dict we might want to serialization strategy.
         self.value = str(self.form_data)
+        self.name = name or selector
 
     async def execute(self, page: Any):
+        """Fill the form inputs with the user's values or defaults and submit it."""
         self.log_fn(f"Executing FormAction: Filling form {self.selector}")
 
         form_locator = page.locator(self.selector)

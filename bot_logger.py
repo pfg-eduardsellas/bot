@@ -9,6 +9,7 @@ class BotLogger:
         self.scan_id = scan_id
 
     def log(self, message: str):
+        """Print a message and store it as a log row for this scan."""
         print(message)
         db = SessionLocal()
         try:

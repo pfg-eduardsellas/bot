@@ -13,6 +13,8 @@ from botpy.core.accessibility import run_full_scan
 
 
 class AgentDecision(BaseModel):
+    """The decision the model returns on each step."""
+
     reasoning: str
     element_id: int
     action_type: str  # "click" or "type"
@@ -21,6 +23,7 @@ class AgentDecision(BaseModel):
 
 
 class IAScanEngine(BaseEngine):
+    """Scan engine where the model picks one action per step to pursue an objective."""
 
     def __init__(self, *args, objective: str, max_steps: int = 15, **kwargs):
         super().__init__(*args, **kwargs)
@@ -33,15 +36,7 @@ class IAScanEngine(BaseEngine):
     async def _get_ia_elements(
         self, page: Any, pre_selectors: set = None
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[int, Action]]:
-        """
-        Detect all interactive elements with full metadata for the AI prompt.
-
-        Returns (new_elements, existing_elements, action_map).
-        new_elements: appeared after the last action (not in pre_selectors).
-        existing_elements: were already present before the last action.
-        When pre_selectors is empty/None (first step or after navigation), all
-        elements go into existing_elements so the prompt uses a flat list.
-        """
+        """Describe the page's interactive elements, split into newly appeared and pre-existing."""
         self.detector.simplified = False
         try:
             detected = await self.detector.detect(page, self.current_id_counter)
@@ -53,8 +48,11 @@ class IAScanEngine(BaseEngine):
         action_map: Dict[int, Action] = {}
 
         for temp_id, action in enumerate(detected):
-            info: Dict[str, Any] = {"id": temp_id}
-            try:
+            info: Dict[str, Any] = {
+                "id": temp_id,
+                "visited": action.selector in self.known_selectors,
+            }
+            try: 
                 if action.type == ActionType.FORM:
                     info["type"] = "input"
                     fields = await page.evaluate(
@@ -130,7 +128,7 @@ class IAScanEngine(BaseEngine):
         decision: AgentDecision,
         action_map: Dict[int, Action],
     ) -> bool:
-        """Execute the action chosen by the AI. Returns True on success."""
+        """Execute the action the model chose for this step."""
         action = action_map.get(decision.element_id)
         if action is None:
             self.log(f"[IA] Invalid element_id {decision.element_id}.")
@@ -177,13 +175,12 @@ class IAScanEngine(BaseEngine):
             try:
                 await self._run_loop(page)
             finally:
-                # Always persist whatever graph we managed to build, even if the
-                # loop aborted on an unexpected error.
+                # Always close the browser, even if the loop aborted on an
+                # unexpected error, so the caller can persist the graph we built.
                 await browser.close()
-                self.unify_urls()
-                self.save_graph()
 
     async def _run_loop(self, page: Any):
+        """Drive the model step by step, executing its choices and building the graph."""
         self._load_robots()
         axe_ready = await self._init_accessibility(page)
 
@@ -257,6 +254,8 @@ class IAScanEngine(BaseEngine):
                     "When NEW ELEMENTS are listed separately, they appeared as a result "
                     "of your last action — prioritize interacting with them unless they "
                     "are not relevant to the objective. "
+                    "Elements marked 'visited: true' have already been interacted with — "
+                    "do NOT repeat them unless it is strictly necessary to make progress. "
                     "Avoid repeating actions already listed in PREVIOUS STEPS. "
                     "Reason through your response before choosing."
                 ),

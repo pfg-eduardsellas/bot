@@ -1,20 +1,18 @@
 import asyncio
-import json
 import os
 import re
 import urllib.robotparser
-from collections import deque
-from typing import List, Set, Dict, Any, Optional, Tuple
+from typing import List, Set, Dict, Any, Optional
 from urllib.parse import urlparse
-from playwright.async_api import async_playwright
 
 from botpy.models.action import Action, ActionType
 from botpy.scrapers.detector import Detector
-from botpy.actions.url_action import URLAction
 from botpy.core.accessibility import setup_axe
 
 
 class BaseEngine:
+    """Setup and helpers shared by both crawling engines."""
+
     def __init__(
         self,
         start_url: str,
@@ -83,6 +81,7 @@ class BaseEngine:
     # region robots and domain checks
 
     def _load_robots(self):
+        """Read the site's robots.txt and its crawl delay."""
         parsed = urlparse(self.start_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
         rp = urllib.robotparser.RobotFileParser()
@@ -102,6 +101,7 @@ class BaseEngine:
         self._robot_parser = rp
 
     def _is_allowed(self, url: str) -> bool:
+        """Check whether robots.txt allows crawling a URL."""
         if self._robot_parser is None:
             return True
         return self._robot_parser.can_fetch(self._bot_name, url)
@@ -133,8 +133,26 @@ class BaseEngine:
     # region helpers
 
     def _on_console_message(self, msg):
+        """Capture console errors raised by the page."""
         if msg.type == "error":
             self.captured_errors.append(msg.text)
+
+    def _on_request_failed(self, request):
+        """Capture network-level failures (DNS, refused, timeout, blocked)."""
+        failure = request.failure
+        # ERR_ABORTED is usually a request cancelled by navigation, not a real
+        # error — skip it to avoid false positives.
+        if failure and "ERR_ABORTED" not in failure:
+            self.captured_errors.append(
+                f"Network request failed ({failure}): {request.url}"
+            )
+
+    def _on_response(self, response):
+        """Capture HTTP error responses (4xx/5xx) that never reach the console."""
+        if response.status >= 400:
+            self.captured_errors.append(
+                f"HTTP {response.status} on {response.request.method} {response.url}"
+            )
 
     async def _wait_for_page(self, page: Any):
         """Wait for DOM + network to settle after an action."""
@@ -150,6 +168,7 @@ class BaseEngine:
     # region browser setup
 
     async def _setup_browser(self, playwright):
+        """Launch Chromium and open a page wired to the error listeners."""
         headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
         user_agent = os.getenv("BOT_USER_AGENT")
         browser = await playwright.chromium.launch(headless=headless)
@@ -157,9 +176,12 @@ class BaseEngine:
             **({"user_agent": user_agent} if user_agent else {})
         )
         page.on("console", self._on_console_message)
+        page.on("requestfailed", self._on_request_failed)
+        page.on("response", self._on_response)
         return browser, page
 
     async def _init_accessibility(self, page: Any) -> bool:
+        """Inject axe-core when accessibility analysis is enabled for the scan."""
         if not self.accessibility:
             self.log("[Accessibility] Accessibility analysis disabled for this scan.")
             return False
@@ -171,65 +193,5 @@ class BaseEngine:
                 "[Accessibility] axe-core unavailable — accessibility scans skipped."
             )
         return axe_ready
-
-    # endregion
-
-    # region post processing
-
-    def unify_urls(self):
-        """Merge duplicate URLAction nodes that share the same URL."""
-        url_groups: Dict[str, List[int]] = {}
-        for action_id, action in self.actions_graph.items():
-            if action.type == ActionType.URL:
-                url_groups.setdefault(action.value, []).append(action_id)
-
-        for ids in url_groups.values():
-            if len(ids) <= 1:
-                continue
-
-            canonical_id = ids[0]
-            canonical = self.actions_graph[canonical_id]
-
-            for other_id in ids[1:]:
-                other = self.actions_graph[other_id]
-
-                for pred_id in other.predecessors:
-                    if pred_id != canonical_id:
-                        canonical.add_predecessor(pred_id)
-                for succ_id in other.successors:
-                    if succ_id != canonical_id:
-                        canonical.add_successor(succ_id)
-
-                for action in self.actions_graph.values():
-                    if other_id in action.predecessors:
-                        action.predecessors = list(
-                            dict.fromkeys(
-                                canonical_id if x == other_id else x
-                                for x in action.predecessors
-                            )
-                        )
-                    if other_id in action.successors:
-                        action.successors = list(
-                            dict.fromkeys(
-                                canonical_id if x == other_id else x
-                                for x in action.successors
-                            )
-                        )
-
-                del self.actions_graph[other_id]
-
-        for action in self.actions_graph.values():
-            action.predecessors = [x for x in action.predecessors if x != action.id]
-            action.successors = [x for x in action.successors if x != action.id]
-
-    def save_graph(self):
-        output = {"actions": [a.to_dict() for a in self.actions_graph.values()]}
-        backend_dir = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
-        out_path = os.path.join(backend_dir, "result.json")
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=4)
-        self.log(f"Engine finished. Graph saved to {out_path}")
 
     # endregion
