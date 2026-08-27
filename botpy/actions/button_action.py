@@ -2,7 +2,6 @@ import asyncio
 import os
 from typing import Any
 from botpy.models.action import Action, ActionType, ActionRetryError
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 _HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
 

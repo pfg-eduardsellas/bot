@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from abc import ABC, abstractmethod
 
 # Avoid circular imports if we need type hinting for 'Page' later

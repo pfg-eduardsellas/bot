@@ -2,14 +2,11 @@ import asyncio
 import os
 import re
 import urllib.robotparser
-from collections import deque
-from typing import List, Set, Dict, Any, Optional, Tuple
+from typing import List, Set, Dict, Any, Optional
 from urllib.parse import urlparse
-from playwright.async_api import async_playwright
 
 from botpy.models.action import Action, ActionType
 from botpy.scrapers.detector import Detector
-from botpy.actions.url_action import URLAction
 from botpy.core.accessibility import setup_axe
 
 

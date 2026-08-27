@@ -49,13 +49,6 @@ class Detector:
         self.form_data = form_data or {}
         self.simplified = simplified
 
-    def _sanitize_text(self, text: str) -> str:
-        """Collapse whitespace and escape quotes in an element's text."""
-        if not text:
-            return ""
-        cleaned = " ".join(text.split())
-        return cleaned.replace("'", "\\'")
-
     def _build_stable_selector(self, item: dict) -> str:
         """Build a stable selector, preferring data-testid, then aria-label, then the CSS path."""
         # TEMP: id branch disabled — never use an element's id as selector.

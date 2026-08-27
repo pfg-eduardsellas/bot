@@ -1,14 +1,11 @@
 import asyncio
 import json
 import os
-import sys
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from botpy.core.scan_engine import ScanEngine
 from botpy.core.ia_engine import IAScanEngine
